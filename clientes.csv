@@ -1,0 +1,9 @@
+﻿Nome,Telefone,Email,Tipo de Cliente,CPF,CNPJ,Como conseguiu,Logradouro,Número,Complemento,Bairro,Cidade,CEP,Observação
+Bruno Pires,(11) 86996-685,bruno@claro,Pessoa Física,38495957817.0,,Instagram,,11585,apt 12,,,9670-000,Predio
+Alice,(11) 25555-888,alice@claro,Pessoa Jurídica,,,Google,,102,Casa02,,,9670000,Teste dois
+Mathias,(11) 86996-685,bruno@claro,Pessoa Física,38495957817.0,,Facebook,Rua Alfredo Bernardo Leite,12,21,Taboão,São Bernardo do Campo,9670000,
+Karol,(11) 55555-555,karo@claro,Pessoa Física,384588787.0,,Instagram,Rua Alfredo Bernardo Leite,20,,Taboão,São Bernardo do Campo,9670000,
+Mary,(11) 99988-9898,mary@titmi,Pessoa Física,nan,,Instagram,Rua Adolfo Laves,15,nan,Vila Valparaíso,Santo André,09060-390,Linda
+Geraldo,(11) 98555-555,gera@timtim,Pessoa Jurídica,,,Outro,Rua Verbo Divino,1156,,Chácara Santo Antônio (Zona Sul),São Paulo,04719-002,
+Alda,118899999,alda@claro,Pessoa Física,5588787878.0,,Indicação,Rua Botuverá,50,,Vila Mira,São Paulo,04377-180,
+Carlos,(11) 33555-555,carlos@claro,Pessoa Física,5658878787.0,,Facebook,Avenida Osvaldo Fregonezi,12,,Alves Dias,São Bernardo do Campo,09851-015,
