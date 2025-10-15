@@ -113,17 +113,22 @@ def obter_coordenadas(cep):
 import requests
 from math import radians, sin, cos, sqrt, atan2
 
+
+import requests
+from math import radians, sin, cos, sqrt, atan2
+
 def calcular_distancia_km(cep_origem, cep_destino):
     """
     Calcula distância aproximada entre dois CEPs (funciona 100% mesmo sem APIs com chave).
-    Baseado em coordenadas aproximadas das cidades via ViaCEP + IBGE.
+    Baseado em coordenadas aproximadas das cidades via ViaCEP + IBGE (Nominatim).
     Retorna distância em km (float) ou None se não conseguir.
     """
 
     def get_lat_lon_via_cep(cep):
         try:
             cep = cep.replace("-", "").strip()
-            r = requests.get(f"https://viacep.com.br/ws/{cep}/json/")
+            # ViaCEP com timeout de 2s
+            r = requests.get(f"https://viacep.com.br/ws/{cep}/json/", timeout=2)
             if r.status_code != 200 or "erro" in r.json():
                 return None
 
@@ -131,13 +136,20 @@ def calcular_distancia_km(cep_origem, cep_destino):
             localidade = d.get("localidade", "")
             uf = d.get("uf", "")
 
-            # Busca coordenadas da cidade via IBGE API
+            # Busca coordenadas da cidade via Nominatim (OpenStreetMap)
             url = f"https://nominatim.openstreetmap.org/search?city={localidade}&state={uf}&country=Brazil&format=json"
-            resp = requests.get(url, headers={"User-Agent": "TimTimFestas"}).json()
+            resp = requests.get(
+                url,
+                headers={"User-Agent": "TimTimFestas"},
+                timeout=2
+            ).json()
+
             if len(resp) > 0:
                 return float(resp[0]["lat"]), float(resp[0]["lon"])
-        except:
-            pass
+        except requests.Timeout:
+            print(f"⚠️ Timeout ao buscar coordenadas do CEP {cep}")
+        except Exception as e:
+            print(f"Erro ao obter coordenadas do CEP {cep}:", e)
         return None
 
     try:
@@ -146,6 +158,7 @@ def calcular_distancia_km(cep_origem, cep_destino):
         if not coord1 or not coord2:
             return None
 
+        # Cálculo de distância haversine
         lat1, lon1 = radians(coord1[0]), radians(coord1[1])
         lat2, lon2 = radians(coord2[0]), radians(coord2[1])
         dlon = lon2 - lon1
@@ -155,7 +168,9 @@ def calcular_distancia_km(cep_origem, cep_destino):
         c = 2 * atan2(sqrt(a), sqrt(1 - a))
         R = 6371.0
         distancia = R * c
+
         return round(distancia, 1)
+
     except Exception as e:
         print("Erro no cálculo de distância:", e)
         return None
@@ -1193,8 +1208,20 @@ def pagina_reservas():
     else:
         st.warning("⚠️ Este cliente não possui CEP cadastrado — cálculo automático indisponível.")
 
+
+        
+        # ====== UNIFICAÇÃO DAS DATAS ======
+# A data usada para verificar disponibilidade também será usada na reserva
+    data_selecionada = pd.to_datetime(data_para_disponibilidade)
+
     with st.form("form_reserva"):
-        data = st.date_input("Data da reserva", pd.to_datetime(reserva["Data"]))
+    # Campo apenas exibido (bloqueado) para não editar
+        st.markdown("### 📅 Data da reserva (vinculada à data de disponibilidade)")
+        st.info(f"**Data selecionada:** {data_selecionada.strftime('%d/%m/%Y')}")
+
+    # Mantém compatibilidade com o código interno que usa a variável 'data'
+        data = data_selecionada
+
         col_h1, col_h2 = st.columns(2)
         with col_h1:
             horario_entrega = st.time_input("Horário Entrega", value=datetime.strptime(reserva["Horário Entrega"] or "08:00", "%H:%M").time())
@@ -1825,15 +1852,17 @@ def pagina_agenda():
             )
 
 
+
 def pagina_checklist():
     import pandas as pd
     from datetime import datetime
+    import pytz
     import os
 
     st.header("📋 Check-list de Brinquedos")
 
     # ========================================
-    # Arquivos base
+    # ARQUIVOS BASE
     # ========================================
     reservas = carregar_dados(
         "reservas.csv",
@@ -1845,13 +1874,21 @@ def pagina_checklist():
     # Garante que o arquivo de checklist exista
     if not os.path.exists(checklist_file):
         pd.DataFrame(columns=[
-            "Reserva_ID", "Cliente", "Brinquedo", "Tipo", "Item", "OK", "Data", "Observação"
+            "Reserva_ID", "Cliente", "Brinquedo", "Tipo", "Item", "OK",
+            "Data", "Observação", "Conferido_por", "Completo"
         ]).to_csv(checklist_file, index=False, encoding="utf-8-sig")
 
     checklist = pd.read_csv(checklist_file)
 
+    # Garante colunas obrigatórias
+    colunas_obrigatorias = ["Reserva_ID", "Cliente", "Brinquedo", "Tipo", "Item",
+                            "OK", "Data", "Observação", "Conferido_por", "Completo"]
+    for col in colunas_obrigatorias:
+        if col not in checklist.columns:
+            checklist[col] = ""
+
     # ========================================
-    # Seleção de reserva
+    # SELEÇÃO DE RESERVA
     # ========================================
     if reservas.empty:
         st.info("Nenhuma reserva encontrada.")
@@ -1869,16 +1906,71 @@ def pagina_checklist():
     brinquedos_lista = [b.strip() for b in str(reserva["Brinquedos"]).split(",") if b.strip()]
 
     # ========================================
-    # Seleção de brinquedo e tipo
+    # VERIFICAÇÃO DE STATUS DE CHECKLISTS
+    # ========================================
+    hist_reserva = checklist[checklist["Reserva_ID"] == reserva_idx]
+    pendentes = []
+    completos = 0
+    status_brinquedos = {}
+
+    for brinquedo in brinquedos_lista:
+        hist_entrega = not hist_reserva[(hist_reserva["Brinquedo"].str.lower() == brinquedo.lower()) &
+                                        (hist_reserva["Tipo"] == "Entrega")].empty
+        hist_retirada = not hist_reserva[(hist_reserva["Brinquedo"].str.lower() == brinquedo.lower()) &
+                                         (hist_reserva["Tipo"] == "Retirada")].empty
+
+        status_brinquedos[brinquedo] = {"Entrega": hist_entrega, "Retirada": hist_retirada}
+
+        if hist_entrega and hist_retirada:
+            completos += 1
+        else:
+            pendentes.append(brinquedo)
+
+    # ========================================
+    # SELO DE STATUS GERAL
+    # ========================================
+    total = len(brinquedos_lista)
+    if completos == total:
+        cor, emoji, texto = "#D4EFDF", "🎯", "Todos os brinquedos estão com checklist completo!"
+    elif completos > 0:
+        cor, emoji, texto = "#FCF3CF", "⚠️", "Alguns brinquedos estão parcialmente conferidos."
+    else:
+        cor, emoji, texto = "#FADBD8", "⛔", "Nenhum checklist foi realizado ainda."
+
+    st.markdown(
+        f"<div style='background-color:{cor};padding:10px;border-radius:8px;margin-bottom:10px;'>"
+        f"<b>{emoji} Status geral:</b> {texto}</div>",
+        unsafe_allow_html=True
+    )
+
+    # Progresso geral
+    st.markdown(
+        f"<div style='background-color:#F0F8FF;padding:8px;border-radius:6px;margin-bottom:10px;'>"
+        f"📊 <b>Progresso geral:</b> {completos} de {len(brinquedos_lista)} brinquedo(s) completos."
+        f"</div>",
+        unsafe_allow_html=True
+    )
+
+    # ========================================
+    # SELEÇÃO DE BRINQUEDO E TIPO
     # ========================================
     brinquedo_sel = st.selectbox("Brinquedo:", brinquedos_lista)
     tipo_sel = st.radio("Tipo de checklist:", ["Entrega (Saída)", "Retirada (Volta)"], horizontal=True)
-
-    # Normaliza tipo
     tipo = "Entrega" if "Entrega" in tipo_sel else "Retirada"
 
+    # Status do brinquedo selecionado
+    if brinquedo_sel in status_brinquedos:
+        s = status_brinquedos[brinquedo_sel]
+        msg = f"**Brinquedo:** {brinquedo_sel}"
+        msg += " 🟩 Entrega" if s["Entrega"] else " 🔴 Entrega pendente"
+        msg += " 🟦 Retirada" if s["Retirada"] else " 🔴 Retirada pendente"
+        st.markdown(
+            f"<div style='background-color:#D4EFDF;padding:8px;border-radius:6px;margin-bottom:8px;'>{msg}</div>",
+            unsafe_allow_html=True
+        )
+
     # ========================================
-    # Carrega peças do brinquedo
+    # CARREGA PEÇAS DO BRINQUEDO
     # ========================================
     pecas_brinquedo = pecas[pecas["Brinquedo"].str.lower() == brinquedo_sel.lower()]
     if pecas_brinquedo.empty:
@@ -1887,18 +1979,44 @@ def pagina_checklist():
 
     st.markdown(f"### Itens de verificação – {brinquedo_sel}")
 
-    # Exibe checkboxes para cada peça
+    # Preenche automaticamente conforme histórico
+    historico_tipo = hist_reserva[
+        (hist_reserva["Brinquedo"].str.lower() == brinquedo_sel.lower()) &
+        (hist_reserva["Tipo"] == tipo)
+    ]
+
     checks = {}
     for i, row in pecas_brinquedo.iterrows():
-        checks[row["Item"]] = st.checkbox(row["Item"], key=f"{tipo}_{i}")
+        item = row["Item"]
+        if not historico_tipo.empty:
+            registro_item = historico_tipo[historico_tipo["Item"] == item]
+            marcado = not registro_item.empty and registro_item.iloc[-1]["OK"] == "✅"
+        else:
+            marcado = False
+        checks[item] = st.checkbox(item, value=marcado, key=f"{tipo}_{i}")
 
-    observacao = st.text_area("Observações adicionais (opcional):", "")
+    # Observações
+    observacao_default = ""
+    if not historico_tipo.empty and isinstance(historico_tipo.iloc[-1]["Observação"], str):
+        observacao_default = historico_tipo.iloc[-1]["Observação"]
+
+    observacao = st.text_area("Observações adicionais (opcional):", value=observacao_default)
 
     # ========================================
-    # Botão salvar
+    # CONFERIDO POR (USUÁRIO LOGADO)
+    # ========================================
+    usuario_logado = st.session_state.get("usuario", "Usuário não identificado")
+    st.info(f"👤 Conferido por: **{usuario_logado}**")
+    conferido_por = usuario_logado
+
+    # ========================================
+    # BOTÃO SALVAR
     # ========================================
     if st.button("💾 Salvar check-list"):
         registros = []
+        tz_sp = pytz.timezone("America/Sao_Paulo")
+        data_atual_sp = datetime.now(tz_sp).strftime("%Y-%m-%d %H:%M")
+
         for item, marcado in checks.items():
             registros.append({
                 "Reserva_ID": reserva_idx,
@@ -1907,31 +2025,471 @@ def pagina_checklist():
                 "Tipo": tipo,
                 "Item": item,
                 "OK": "✅" if marcado else "❌",
-                "Data": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                "Observação": observacao
+                "Data": data_atual_sp,
+                "Observação": observacao,
+                "Conferido_por": conferido_por,
+                "Completo": "✅" if all(checks.values()) else "⚠️"
             })
 
         df_novos = pd.DataFrame(registros)
         checklist = pd.concat([checklist, df_novos], ignore_index=True)
         checklist.to_csv(checklist_file, index=False, encoding="utf-8-sig")
 
-        st.success("✅ Check-list salvo com sucesso!")
+        st.success(f"✅ Check-list de {tipo.lower()} salvo com sucesso para {brinquedo_sel}!")
+        st.balloons()
 
     # ========================================
-    # Histórico
+    # ABA: HISTÓRICO E INDICADORES
     # ========================================
     st.divider()
-    st.subheader("📜 Histórico de check-lists")
+    aba1, aba2 = st.tabs(["📜 Histórico de check-lists", "📊 Indicadores mensais"])
 
-    hist = checklist[checklist["Reserva_ID"] == reserva_idx]
-    if hist.empty:
-        st.info("Nenhum check-list registrado para esta reserva ainda.")
+    # ---------- HISTÓRICO ----------
+    with aba1:
+        filtro_tipo = st.multiselect("Filtrar por tipo:", ["Entrega", "Retirada"], default=["Entrega", "Retirada"])
+        filtro_cliente = st.text_input("Filtrar por cliente (opcional):", "")
+        filtro_brinquedo = st.text_input("Filtrar por brinquedo (opcional):", "")
+
+        hist = checklist.copy()
+        if filtro_tipo:
+            hist = hist[hist["Tipo"].isin(filtro_tipo)]
+        if filtro_cliente:
+            hist = hist[hist["Cliente"].str.contains(filtro_cliente, case=False, na=False)]
+        if filtro_brinquedo:
+            hist = hist[hist["Brinquedo"].str.contains(filtro_brinquedo, case=False, na=False)]
+
+        if hist.empty:
+            st.info("Nenhum check-list encontrado com os filtros aplicados.")
+        else:
+            st.dataframe(hist.sort_values(["Data", "Cliente"]), use_container_width=True, hide_index=True)
+
+    # ---------- INDICADORES ----------
+    with aba2:
+        if checklist.empty:
+            st.info("Nenhum dado disponível para estatísticas.")
+        else:
+            checklist["Data_mês"] = pd.to_datetime(checklist["Data"], errors="coerce").dt.to_period("M").astype(str)
+            resumo = (checklist.groupby(["Data_mês", "Tipo"])
+                      .size()
+                      .unstack(fill_value=0)
+                      .rename_axis(None, axis=1)
+                      .reset_index())
+
+            st.markdown("### 📈 Total de checklists por mês")
+            st.bar_chart(resumo.set_index("Data_mês"))
+
+
+# ==============================
+# MÓDULO FROTA – TimTim Festas
+# ==============================
+import os
+import pandas as pd
+import streamlit as st
+from datetime import datetime, date
+
+# ---------------------------------
+# CONFIGURAÇÕES / CAMINHOS
+# ---------------------------------
+BASE_DIR = r"C:\TimTimFestas"
+ARQ_VEIC = os.path.join(BASE_DIR, "veiculos.csv")
+ARQ_MANU = os.path.join(BASE_DIR, "manutencoes.csv")
+COLS_CUSTOS = ["Descrição","Categoria","Valor","Data","Forma de Pagamento","Observação"]
+
+
+COLS_VEIC = [
+    "Placa", "Modelo", "Tipo", "Ano", "Status", "Km Atual",
+    "Data IPVA", "Data Licenciamento", "Data Seguro", "Observação"
+]
+
+COLS_MANU = ["Placa", "Tipo", "Descrição", "Data", "Km", "Valor (R$)"]
+
+TIPOS_MANU = [
+    "Troca de óleo", "Pneus", "Freios", "Motor",
+    "Elétrica", "Suspensão", "Outros"
+]
+
+KM_TROCA_OLEO = 6000
+MESES_TROCA_OLEO = 6
+
+
+# ---------------------------------
+# FUNÇÕES AUXILIARES
+# ---------------------------------
+def _garante_base():
+    os.makedirs(BASE_DIR, exist_ok=True)
+    if not os.path.exists(ARQ_VEIC):
+        pd.DataFrame(columns=COLS_VEIC).to_csv(ARQ_VEIC, index=False, encoding="utf-8")
+    if not os.path.exists(ARQ_MANU):
+        pd.DataFrame(columns=COLS_MANU).to_csv(ARQ_MANU, index=False, encoding="utf-8")
+
+
+def carregar_csv(caminho: str, cols: list[str]) -> pd.DataFrame:
+    _garante_base()
+    try:
+        df = pd.read_csv(caminho, dtype=str, encoding="utf-8")
+    except FileNotFoundError:
+        df = pd.DataFrame(columns=cols)
+
+    for c in cols:
+        if c not in df.columns:
+            df[c] = ""
+
+    # ====== VEÍCULOS ======
+    if caminho == ARQ_VEIC:
+        df["Ano"] = pd.to_numeric(df["Ano"], errors="coerce")
+        if "Km Atual" in df.columns:
+            df["Km Atual"] = pd.to_numeric(df["Km Atual"], errors="coerce").fillna(0).astype(int)
+        if "Valor Veículo (R$)" in df.columns:
+            df["Valor Veículo (R$)"] = pd.to_numeric(df["Valor Veículo (R$)"], errors="coerce").fillna(0.0)
+        for dc in ["Data IPVA", "Data Licenciamento", "Data Seguro"]:
+            if dc in df.columns:
+                df[dc] = pd.to_datetime(df[dc], errors="coerce").dt.date
+
+    # ====== MANUTENÇÕES ======
+    elif caminho == ARQ_MANU:
+        if "Km" in df.columns:
+            df["Km"] = pd.to_numeric(df["Km"], errors="coerce").fillna(0).astype(int)
+        if "Valor (R$)" in df.columns:
+            df["Valor (R$)"] = pd.to_numeric(df["Valor (R$)"], errors="coerce").fillna(0.0)
+        if "Data" in df.columns:
+            df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.date
+
+    # ====== CUSTOS ======
+    elif caminho.endswith("custos.csv"):
+        if "Valor" in df.columns:
+            df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce").fillna(0.0)
+        if "Data" in df.columns:
+            df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.date
+
+    # ====== HISTÓRICO DE KM ======
+    elif caminho.endswith("km_log.csv"):
+        if "Km" in df.columns:
+            df["Km"] = pd.to_numeric(df["Km"], errors="coerce").fillna(0).astype(int)
+        if "Data" in df.columns:
+            df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.date
+
+    # ====== OUTROS ======
     else:
-        st.dataframe(
-            hist.sort_values(["Tipo", "Item"]),
-            use_container_width=True,
-            hide_index=True
+        for col in ["Km", "Valor (R$)"]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+        if "Data" in df.columns:
+            df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.date
+
+    return df[cols]
+
+
+
+
+def salvar_csv(df: pd.DataFrame, caminho: str):
+    df.to_csv(caminho, index=False, encoding="utf-8")
+
+
+def meses_passados(d1: date, d2: date) -> int:
+    if pd.isna(d1) or d1 is None or pd.isna(d2) or d2 is None:
+        return 9999
+    return (d2.year - d1.year) * 12 + (d2.month - d1.month) - (1 if d2.day < d1.day else 0)
+
+
+def alerta_vencimento(rotulo: str, data_venc: date):
+    if data_venc is None or pd.isna(data_venc):
+        st.info(f"{rotulo}: sem data informada.")
+        return
+    delta = (data_venc - date.today()).days
+    if delta < 0:
+        st.error(f"❌ {rotulo} vencido em {abs(delta)} dias ({data_venc.strftime('%d/%m/%Y')}).")
+    elif delta <= 15:
+        st.warning(f"⚠️ {rotulo} vence em {delta} dias ({data_venc.strftime('%d/%m/%Y')}).")
+    else:
+        st.success(f"✅ {rotulo} em dia (vence {data_venc.strftime('%d/%m/%Y')}).")
+
+
+def proxima_troca_oleo_alerta(veic_row: pd.Series, df_manu: pd.DataFrame):
+    placa = veic_row["Placa"]
+    km_atual = int(veic_row.get("Km Atual", 0) or 0)
+    manu_placa = df_manu[(df_manu["Placa"] == placa) & (df_manu["Tipo"] == "Troca de óleo")].copy()
+    manu_placa = manu_placa.sort_values("Data", ascending=False)
+
+    if manu_placa.empty:
+        st.info("🔧 Troca de óleo: sem histórico cadastrado.")
+        return
+
+    ultima = manu_placa.iloc[0]
+    data_ult = ultima["Data"]
+    km_ult = int(ultima["Km"] or 0)
+
+    meses = meses_passados(data_ult, date.today())
+    km_diff = max(0, km_atual - km_ult)
+
+    precisa = (km_diff >= KM_TROCA_OLEO) or (meses >= MESES_TROCA_OLEO)
+
+    if precisa:
+        st.warning(
+            f"⚠️ Troca de óleo vencida • Última: {data_ult.strftime('%d/%m/%Y')} aos {km_ult} km "
+            f"• {km_diff} km / {meses} mês(es) desde então."
         )
+    else:
+        st.success(
+            f"✅ Troca de óleo em dia • Última: {data_ult.strftime('%d/%m/%Y')} aos {km_ult} km "
+            f"• +{km_diff} km / {meses} mês(es) desde então."
+        )
+
+
+# ---------------------------------
+# PÁGINA PRINCIPAL – FROTA
+# ---------------------------------
+
+
+def pagina_frota():
+    st.markdown(
+        """
+        <style>
+        .tt-card{border:1px solid #eee;border-radius:16px;padding:12px;margin-bottom:10px;background:#FFF4B5;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+        .tt-title{font-weight:700;color:#7A5FFF}
+        .tt-muted{font-size:12px;color:#444}
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
+    st.header("🚗 Controle de Frota")
+
+    # ==== Carregamento dos dados ====
+    veiculos = carregar_csv("veiculos.csv", [
+        "Placa","Modelo","Tipo","Ano","Status","Km Atual","Valor Veículo (R$)",
+        "Data IPVA","Data Licenciamento","Data Seguro",
+        "IPVA Pago","Licenciamento Pago","Seguro Pago","Observação"
+    ])
+    manutencoes = carregar_csv("manutencoes.csv", [
+        "Placa","Tipo","Descrição","Data","Km","Valor (R$)"
+    ])
+
+    # 🔧 Corrige tipos (principalmente os campos Pago)
+    TRUE_SET = {"true","1","sim","yes","y","verdadeiro","pago","ok"}
+    for pago_col in ["IPVA Pago","Licenciamento Pago","Seguro Pago"]:
+        veiculos[pago_col] = veiculos[pago_col].apply(lambda x: str(x).strip().lower() in TRUE_SET)
+    for dcol in ["Data IPVA","Data Licenciamento","Data Seguro"]:
+        veiculos[dcol] = pd.to_datetime(veiculos[dcol], errors="coerce").dt.date
+    veiculos["Km Atual"] = pd.to_numeric(veiculos["Km Atual"], errors="coerce").fillna(0).astype(int)
+    veiculos["Valor Veículo (R$)"] = pd.to_numeric(veiculos["Valor Veículo (R$)"], errors="coerce").fillna(0.0)
+
+    # ==== Cards topo ====
+    tot_veic = len(veiculos)
+    tot_manu = manutencoes["Valor (R$)"].sum() if not manutencoes.empty else 0.0
+    soma_frota = veiculos["Valor Veículo (R$)"].sum() if not veiculos.empty else 0.0
+    ult_manu = manutencoes["Data"].max() if not manutencoes.empty else None
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("🚘 Veículos", f"{tot_veic}")
+    c2.metric("💵 Gasto em manutenções", f"R$ {tot_manu:,.2f}")
+    c3.metric("🧾 Valor total da frota", f"R$ {soma_frota:,.2f}")
+    c4.metric("🗓️ Última manutenção", ult_manu.strftime("%d/%m/%Y") if pd.notna(pd.to_datetime(ult_manu)) else "-")
+
+    aba1, aba2, aba3, aba4 = st.tabs(["Cadastro de Veículos", "Manutenções", "Resumo & Alertas", "Controle"])
+
+    # =======================
+    # 📋 ABA 1 - CADASTRO
+    # =======================
+    with aba1:
+        st.subheader("Cadastrar / Atualizar Veículo")
+
+        with st.form("cad_veic", clear_on_submit=True):
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                placa = st.text_input("Placa").upper().strip()
+                tipo = st.selectbox("Tipo", ["Kombi","Carro","Moto","Van","Pickup","Outro"])
+                ano = st.number_input("Ano", min_value=1970, max_value=date.today().year+1, value=date.today().year)
+            with col2:
+                modelo = st.text_input("Modelo")
+                status = st.selectbox("Status", ["Ativo","Em manutenção","Inativo"])
+                km_atual = st.number_input("Km Atual", min_value=0, step=100, value=0)
+            with col3:
+                valor_veic = st.number_input("Valor do veículo (R$)", min_value=0.0, step=100.0, value=0.0)
+
+            col4, col5, col6 = st.columns(3)
+            with col4:
+                ipva = st.date_input("Data IPVA", value=None)
+                ipva_pago = st.checkbox("IPVA Pago", value=False)
+            with col5:
+                lic = st.date_input("Data Licenciamento", value=None)
+                lic_pago = st.checkbox("Licenciamento Pago", value=False)
+            with col6:
+                seg = st.date_input("Data Seguro", value=None)
+                seg_pago = st.checkbox("Seguro Pago", value=False)
+
+            obs = st.text_area("Observações")
+            btn = st.form_submit_button("Salvar veículo ✅")
+            if btn:
+                if not placa or not modelo:
+                    st.error("Informe Placa e Modelo.")
+                else:
+                    novo = pd.DataFrame([{
+                        "Placa": placa, "Modelo": modelo, "Tipo": tipo, "Ano": int(ano),
+                        "Status": status, "Km Atual": int(km_atual),
+                        "Valor Veículo (R$)": float(valor_veic),
+                        "Data IPVA": ipva, "Data Licenciamento": lic, "Data Seguro": seg,
+                        "IPVA Pago": ipva_pago, "Licenciamento Pago": lic_pago, "Seguro Pago": seg_pago,
+                        "Observação": obs
+                    }])
+                    if placa in veiculos["Placa"].values:
+                        veiculos.loc[veiculos["Placa"] == placa] = novo.iloc[0]
+                        st.success(f"Veículo {placa} atualizado!")
+                    else:
+                        veiculos = pd.concat([veiculos, novo], ignore_index=True)
+                        st.success(f"Veículo {placa} cadastrado!")
+                    salvar_csv(veiculos, "veiculos.csv")
+
+        if not veiculos.empty:
+            st.dataframe(veiculos, use_container_width=True)
+        else:
+            st.info("Nenhum veículo cadastrado.")
+
+    # =======================
+    # 🔧 ABA 2 - MANUTENÇÕES
+    # =======================
+    with aba2:
+        st.subheader("Registrar Manutenção")
+        if veiculos.empty:
+            st.warning("Cadastre um veículo primeiro.")
+        else:
+            with st.form("cad_manu"):
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    placa_m = st.selectbox("Placa", veiculos["Placa"])
+                    tipo_m = st.selectbox("Tipo de manutenção", TIPOS_MANU)
+                with col2:
+                    data_m = st.date_input("Data", value=date.today())
+                    km_m = st.number_input("Km", min_value=0, step=100, value=0)
+                with col3:
+                    valor_m = st.number_input("Valor (R$)", min_value=0.0, step=10.0)
+                desc_m = st.text_area("Descrição / Observação")
+                btn_m = st.form_submit_button("Salvar manutenção ✅")
+                if btn_m:
+                    nova = pd.DataFrame([{
+                        "Placa": placa_m, "Tipo": tipo_m, "Descrição": desc_m,
+                        "Data": data_m, "Km": km_m, "Valor (R$)": valor_m
+                    }])
+                    manutencoes = pd.concat([manutencoes, nova], ignore_index=True)
+                    salvar_csv(manutencoes, "manutencoes.csv")
+                    st.success(f"Manutenção '{tipo_m}' registrada para {placa_m}!")
+
+                    # Integração com custos.csv
+                    try:
+                        custos = carregar_csv("custos.csv", COLS_CUSTOS)
+                        novo_custo = {
+                            "Descrição": f"Manutenção {tipo_m} - {placa_m}",
+                            "Categoria": "Manutenção de Frota",
+                            "Valor": valor_m,
+                            "Data": data_m,
+                            "Forma de Pagamento": "Outro",
+                            "Observação": desc_m
+                        }
+                        custos.loc[len(custos)] = novo_custo
+                        salvar_csv(custos, "custos.csv")
+                        st.info("📥 Lançado em custos.csv (Manutenção de Frota).")
+                    except Exception as e:
+                        st.warning(f"Não foi possível lançar em custos.csv: {e}")
+
+    # =======================
+    # 📊 ABA 3 - RESUMO & ALERTAS
+    # =======================
+    with aba3:
+        st.subheader("Resumo e Alertas")
+
+        # previsões de custos
+        hoje = date.today()
+        def pendentes(df, col_data, col_pago):
+            df = df[~df[col_pago]]
+            datas = pd.to_datetime(df[col_data], errors="coerce").dt.date
+            total = len(datas.dropna())
+            mes = sum((d and d.month == hoje.month and d.year == hoje.year) for d in datas)
+            return total, mes
+
+        ipva_t, ipva_m = pendentes(veiculos,"Data IPVA","IPVA Pago")
+        lic_t, lic_m = pendentes(veiculos,"Data Licenciamento","Licenciamento Pago")
+        seg_t, seg_m = pendentes(veiculos,"Data Seguro","Seguro Pago")
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("🧾 IPVA pendente", ipva_t, delta=f"este mês: {ipva_m}")
+        c2.metric("📄 Licenciamento pendente", lic_t, delta=f"este mês: {lic_m}")
+        c3.metric("🛡️ Seguro pendente", seg_t, delta=f"este mês: {seg_m}")
+
+        # alertas
+        for _, v in veiculos.iterrows():
+            st.markdown(f"<div class='tt-card'><div class='tt-title'>{v['Placa']} — {v['Modelo']}</div>", unsafe_allow_html=True)
+            if v["IPVA Pago"]:
+                st.success("✅ IPVA está pago.")
+            else:
+                alerta_vencimento("IPVA", v["Data IPVA"])
+            if v["Licenciamento Pago"]:
+                st.success("✅ Licenciamento está pago.")
+            else:
+                alerta_vencimento("Licenciamento", v["Data Licenciamento"])
+            if v["Seguro Pago"]:
+                st.success("✅ Seguro está pago.")
+            else:
+                alerta_vencimento("Seguro", v["Data Seguro"])
+            proxima_troca_oleo_alerta(v, manutencoes)
+            st.markdown("</div>", unsafe_allow_html=True)
+
+    # =======================
+    # ⚙️ ABA 4 - CONTROLE
+    # =======================
+    with aba4:
+        st.subheader("Controle do Veículo (Atualização Rápida)")
+
+        if veiculos.empty:
+            st.info("Cadastre um veículo para usar esta aba.")
+            return
+
+        placa_sel = st.selectbox("Selecione a placa", veiculos["Placa"].unique())
+        row = veiculos[veiculos["Placa"] == placa_sel].iloc[0]
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            km_q = st.number_input("Km Atual", min_value=0, step=100, value=int(row["Km Atual"]))
+            ipva_pago_q = st.checkbox("IPVA Pago", value=bool(row["IPVA Pago"]))
+        with col2:
+            lic_pago_q = st.checkbox("Licenciamento Pago", value=bool(row["Licenciamento Pago"]))
+            seg_pago_q = st.checkbox("Seguro Pago", value=bool(row["Seguro Pago"]))
+        with col3:
+            data_ipva_q = st.date_input("Venc. IPVA", value=row["Data IPVA"])
+            data_lic_q = st.date_input("Venc. Licenciamento", value=row["Data Licenciamento"])
+            data_seg_q = st.date_input("Venc. Seguro", value=row["Data Seguro"])
+
+        c4, c5 = st.columns([2,1])
+        with c4:
+            if st.button("💾 Salvar atualização", use_container_width=True):
+                veiculos.loc[veiculos["Placa"] == placa_sel, [
+                    "Km Atual","IPVA Pago","Licenciamento Pago","Seguro Pago",
+                    "Data IPVA","Data Licenciamento","Data Seguro"
+                ]] = [int(km_q), ipva_pago_q, lic_pago_q, seg_pago_q, data_ipva_q, data_lic_q, data_seg_q]
+                salvar_csv(veiculos, "veiculos.csv")
+
+                # log de km
+                km_log = carregar_csv("km_log.csv", ["Placa","Data","Km"])
+                km_log.loc[len(km_log)] = [placa_sel, date.today(), km_q]
+                salvar_csv(km_log, "km_log.csv")
+
+                st.success("✅ Atualização salva!")
+                st.rerun()
+
+        with c5:
+            if st.button("✅ Marcar tudo como pago", use_container_width=True):
+                veiculos.loc[veiculos["Placa"] == placa_sel, ["IPVA Pago","Licenciamento Pago","Seguro Pago"]] = True
+                salvar_csv(veiculos, "veiculos.csv")
+                st.success("Todos os pagamentos marcados como quitados!")
+                st.rerun()
+
+        # gráfico de evolução do KM
+        st.markdown("### 📈 Evolução do KM")
+        km_log = carregar_csv("km_log.csv", ["Placa","Data","Km"])
+        df_km = km_log[km_log["Placa"] == placa_sel]
+        if not df_km.empty:
+            df_km["Data"] = pd.to_datetime(df_km["Data"], errors="coerce")
+            df_km = df_km.sort_values("Data")
+            st.line_chart(df_km.set_index("Data")["Km"])
+        else:
+            st.info("Ainda sem histórico de KM.")
 
 
 
@@ -2014,6 +2572,7 @@ else:
         "Custos": ("💸 Custos", "custos"), 
         "Estoque": ("📦 Estoque", "estoque"),    
         "Check-list": ("📦 Check-list", "check-list"), 
+        "Frota": ("🚗 Frota", "frota"),
         "Sair": ("🚪 Sair", "sair")
     }
 
@@ -2043,6 +2602,8 @@ else:
         pagina_estoque()
     elif menu == "Check-list":
         pagina_checklist()
+    elif menu == "Frota":
+        pagina_frota()
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
