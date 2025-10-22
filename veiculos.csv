@@ -1,0 +1,2 @@
+Placa,Modelo,Tipo,Ano,Status,Km Atual,Valor Veículo (R$),Data IPVA,Data Licenciamento,Data Seguro,IPVA Pago,Licenciamento Pago,Seguro Pago,Observação
+DNT5525,Peugeot 307,Carro,2008,Ativo,120000,0.0,2025-09-01,2025-09-01,2025-09-01,True,True,True,

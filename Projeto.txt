@@ -1,0 +1,6 @@
+-Horário da Festas I e T ok
+-Calcular Frete automático pelo KM ok
+-Categoria dos Brinquedos, (Monterssori P M G x5 Frete ou tradicionais x3 o frete a partir 5 km) ok
+-Adicionar nas pagina Reservas e Agendas, mudar o ícone
+-Adicionar Montessori
+-Aviso de alerta para clientes já cadastrados quando por exemplo tiver chegando perto da data passada

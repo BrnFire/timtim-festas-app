@@ -1,9 +1,14 @@
-﻿Nome,Telefone,Email,Tipo de Cliente,CPF,CNPJ,Como conseguiu,Logradouro,Número,Complemento,Bairro,Cidade,CEP,Observação
-Bruno Pires,(11) 86996-685,bruno@claro,Pessoa Física,38495957817.0,,Instagram,,11585,apt 12,,,9670-000,Predio
-Alice,(11) 25555-888,alice@claro,Pessoa Jurídica,,,Google,,102,Casa02,,,9670000,Teste dois
-Mathias,(11) 86996-685,bruno@claro,Pessoa Física,38495957817.0,,Facebook,Rua Alfredo Bernardo Leite,12,21,Taboão,São Bernardo do Campo,9670000,
-Karol,(11) 55555-555,karo@claro,Pessoa Física,384588787.0,,Instagram,Rua Alfredo Bernardo Leite,20,,Taboão,São Bernardo do Campo,9670000,
-Mary,(11) 99988-9898,mary@titmi,Pessoa Física,nan,,Instagram,Rua Adolfo Laves,15,nan,Vila Valparaíso,Santo André,09060-390,Linda
-Geraldo,(11) 98555-555,gera@timtim,Pessoa Jurídica,,,Outro,Rua Verbo Divino,1156,,Chácara Santo Antônio (Zona Sul),São Paulo,04719-002,
-Alda,118899999,alda@claro,Pessoa Física,5588787878.0,,Indicação,Rua Botuverá,50,,Vila Mira,São Paulo,04377-180,
-Carlos,(11) 33555-555,carlos@claro,Pessoa Física,5658878787.0,,Facebook,Avenida Osvaldo Fregonezi,12,,Alves Dias,São Bernardo do Campo,09851-015,
+﻿Nome,Telefone,Email,Tipo de Cliente,RG,CPF,CNPJ,Como conseguiu,Logradouro,Número,Complemento,Bairro,Cidade,CEP,Observação
+Bianca Souza Mussi,(11) 95432-5404,bia.souza@live.com,Pessoa Física,42.477.9328,411.212.828-22,,Instagram,Rua Mem de Sá,143,,Casa Grande,Diadema,09961-170,
+Julia Freitas Branco ,(11) 94915-3495,fjulia6112@gmail.com,Pessoa Física,53.536.0034,517.601.068-28,,Instagram,Rua Visconde de Taunay,216,,Bangú,Santo André,09210-570,
+Gleicy Fernanda do Nascimento Silva Mellenbergs,(11) 96411-9014,Gleicyfernanda15@gmail.com,Pessoa Física,52.436.3742,469.705.748-14,,Instagram,Rua Serra da Bocaina,194,,Quarta Parada,São Paulo,03174-000,
+Gabriela Carolina Silva de Lima,(11) 95797-1134,gabrielacarolina03@gmail.com,Pessoa Física,39.605.6611,434.421.608-39,,Instagram,Rua Padre Igino Francisco Teixeira,43,APT 62,Assunção,São Bernardo do Campo,09810-160,
+Amanda Dionisio Viana,(11) 95478-7321,amandad.viana23@gmail.com,Pessoa Física,45.952.9079,437.611.878-82,,Instagram,Avenida Osvaldo Fregonezi,21031,,Alves Dias,São Bernardo do Campo,09851-015,
+Marcelo de Oliveira Junior,(11) 98056-3507,marcelo_oliveira18@outlook.com,Pessoa Física,46.733.4559,408.531.408-47,,Indicação,Rua França Pinto,133,,Vila Mariana,São Paulo,04016-030,Amigo da Juh
+Ana Caroline Castilho Marques,(11) 95683-1222,aninha.ccastilho@hotmail.com,Pessoa Física,43.718.4766,431.168.868-73,,Instagram,Rua Sebastião Diogo,99,Clube Gisela,Boa Vista,São Caetano do Sul,09572-130,Clube Gisela
+Letícia Mendes Farias,(11) 96425-4456,le2810@live.com,Pessoa Física,39.961.364,385.851.828-06,,Indicação,Avenida Nevada,645,,Parque Oratório,Santo André,09250-490,Apt difícil acesso com Chuva
+Oswaldo Dias Garcia,(11) 94049-0607,licovulto@hotmail.com,Pessoa Física,40.697.0646,379.041.198-11,,Google,Rua Filinto Gomes Silva,42,ONG,Vila Cordeiro,São Paulo,04580-030,
+PALOMA YUMI DE OLIVEIRA MALDONADO,(11) 97381-8816,pyumio@outlook.com,Pessoa Física,45.990.7128,359.269.778-19,,Instagram,Rua Rubens Meireles,442,APTO 22 TORR2,Várzea da Barra Funda,São Paulo,01141-000,
+Bruna Ruiz Rossi,(11) 95219-7056,brunamruiz@gmail.com,Pessoa Física,35.274.6518,393.827.408-56,,Instagram,Avenida Dom Bosco,228,APT 03 COBERTURA,Vila Francisco Matarazzo,Santo André,09240-500,
+Andresa Cristina de Souza,(11) 99545-5175,andresa.souza@telefonica.com,Pessoa Física,43.843.5151,338.168.298-99,,Instagram,Rua Catão,280,,Vila Romana,São Paulo,05049-000,
+Camila Babugia,(11) 97390-3284,cababugia@gmail.com,Pessoa Física,24.592.6380,347.593.058-74,,Instagram,Rua Terceiro-Sargento-Aeronáutica Francisco Luiz Roberto Boening,80,,Jardim Santa Mena,Guarulhos,07096-240,

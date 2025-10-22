@@ -46,6 +46,9 @@ st.markdown(f"""
 # FUNÇÃO DE LOGIN
 # ========================================
 def login():
+    from datetime import datetime
+    ano = datetime.now().year
+
     st.sidebar.image("logo.png", use_container_width=True)
     st.sidebar.title("TimTim Festas 🎈")
     st.sidebar.subheader("Acesso ao sistema")
@@ -60,6 +63,36 @@ def login():
             st.session_state["logado"] = True
         else:
             st.sidebar.error("Usuário ou senha incorretos!")
+
+    # 💜 Rodapé fixo no login
+    st.sidebar.markdown(
+        f"""
+        <style>
+            .login-footer {{
+                position: fixed;
+                bottom: 15px;
+                left: 10px;
+                width: 260px;
+                text-align: center;
+                font-size: 0.8em;
+                color: #555;
+                opacity: 0.85;
+                line-height: 1.4;
+            }}
+            .login-footer strong {{
+                color: #7A5FFF;
+            }}
+        </style>
+        <div class="login-footer">
+            <strong>BRN Solutions</strong><br>
+            © {ano} Todos os direitos reservados
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+            
+            
 
 # ========================================
 # FUNÇÕES AUXILIARES
@@ -243,19 +276,37 @@ def pagina_relatorios():
     # ============================
     # Cálculos base (mês a mês)
     # ============================
-    reservas["Bruto"] = (reservas["Valor Total"] + reservas["Valor Extra"] + reservas["Frete"] - reservas["Desconto"]).clip(lower=0)
+    # Garante que colunas de data sejam datetime válidas
+    reservas["Data"] = pd.to_datetime(reservas["Data"], errors="coerce")
+    custos["Data"]   = pd.to_datetime(custos["Data"], errors="coerce")
+
+    # Remove linhas sem data válida
+    reservas = reservas.dropna(subset=["Data"]).reset_index(drop=True)
+    custos   = custos.dropna(subset=["Data"]).reset_index(drop=True)
+
+    # Calcula valores brutos e períodos
+    reservas["Bruto"] = (
+        reservas["Valor Total"]
+    ).clip(lower=0)
+
+    # Cria colunas AnoMes seguras
     reservas["AnoMes"] = reservas["Data"].dt.to_period("M").astype(str)
     custos["AnoMes"]   = custos["Data"].dt.to_period("M").astype(str)
 
+    # Agregações mensais
     bruto_mensal  = reservas.groupby("AnoMes", as_index=False)["Bruto"].sum()
     custo_mensal  = custos.groupby("AnoMes", as_index=False)["Valor"].sum().rename(columns={"Valor": "Custo"})
+
+    # Junta resultados
     df_fin_mensal = pd.merge(bruto_mensal, custo_mensal, on="AnoMes", how="outer").fillna(0)
     df_fin_mensal["Liquido"] = (df_fin_mensal["Bruto"] - df_fin_mensal["Custo"]).clip(lower=0)
+
+    # Garante que AnoMes seja ordenável por data
     df_fin_mensal["AnoMes_dt"] = pd.to_datetime(df_fin_mensal["AnoMes"], errors="coerce").fillna(pd.Timestamp("1970-01-01"))
     df_fin_mensal = df_fin_mensal.sort_values("AnoMes_dt")
 
+
     # Totais para cards
-    faturado_bruto_previsto = reservas["Bruto"].sum()
     total_realizado         = reservas["Sinal"].sum()
     custo_total_periodo     = custos["Valor"].sum()
     liquido_total_periodo   = df_fin_mensal["Liquido"].sum()
@@ -266,8 +317,7 @@ def pagina_relatorios():
     st.markdown("<br>", unsafe_allow_html=True)
     c1, c2, c3, c4, c5 = st.columns(5)
     cards = [
-        ("💰 Faturado Bruto (Previsto)", f"R$ {faturado_bruto_previsto:,.2f}", "#7A5FFF"),
-        ("✅ Total Realizado (Recebido)", f"R$ {total_realizado:,.2f}", "#2ECC71"),
+        ("💰 Total Realizado (Recebido)", f"R$ {total_realizado:,.2f}", "#2ECC71"),
         ("📊 Lucro Líquido (Período)", f"R$ {liquido_total_periodo:,.2f}", "#0078D7"),
         ("🧾 Custos (Período)", f"R$ {custo_total_periodo:,.2f}", "#E74C3C"),
         ("🧮 Reservas", len(reservas), "#F1C40F"),
@@ -744,12 +794,11 @@ def pagina_brinquedos():
         mostrar_resumo_e_lista(df[df["Categoria"] == "Montessori"], "Montessori")
 
 
-
 def pagina_clientes():
     st.header("👨‍👩‍👧 Cadastro de Clientes")
 
     colunas = [
-        "Nome", "Telefone", "Email", "Tipo de Cliente", "CPF", "CNPJ",
+        "Nome", "Telefone", "Email", "Tipo de Cliente", "RG", "CPF", "CNPJ",
         "Como conseguiu", "Logradouro", "Número", "Complemento",
         "Bairro", "Cidade", "CEP", "Observação"
     ]
@@ -785,12 +834,31 @@ def pagina_clientes():
         tipo_cliente = st.radio("Tipo de Cliente", ["Pessoa Física", "Pessoa Jurídica"],
                                 index=0 if cliente_edicao["Tipo de Cliente"] != "Pessoa Jurídica" else 1)
 
+        # Novo campo RG
+        rg_raw = st.text_input("RG", value=cliente_edicao.get("RG", ""))
+        rg = re.sub(r"\D", "", rg_raw)
+        if len(rg) >= 7:
+            rg = f"{rg[:2]}.{rg[2:5]}.{rg[5:]}"
+        else:
+            rg = rg_raw
+
         cpf, cnpj = cliente_edicao["CPF"], cliente_edicao["CNPJ"]
+
         if tipo_cliente == "Pessoa Física":
-            cpf = st.text_input("CPF", value=cpf)
+            cpf_raw = st.text_input("CPF", value=cliente_edicao["CPF"])
+            cpf_num = re.sub(r"\D", "", cpf_raw)
+            cpf = (
+                f"{cpf_num[:3]}.{cpf_num[3:6]}.{cpf_num[6:9]}-{cpf_num[9:]}"
+                if len(cpf_num) == 11 else cpf_raw
+            )
             cnpj = ""
         else:
-            cnpj = st.text_input("CNPJ", value=cnpj)
+            cnpj_raw = st.text_input("CNPJ", value=cliente_edicao["CNPJ"])
+            cnpj_num = re.sub(r"\D", "", cnpj_raw)
+            cnpj = (
+                f"{cnpj_num[:2]}.{cnpj_num[2:5]}.{cnpj_num[5:8]}/{cnpj_num[8:12]}-{cnpj_num[12:]}"
+                if len(cnpj_num) == 14 else cnpj_raw
+            )
             cpf = ""
 
         como_conseguiu = st.selectbox(
@@ -806,7 +874,10 @@ def pagina_clientes():
         # Linha do CEP + botão lado a lado
         col_cep1, col_cep2 = st.columns([3, 1])
         with col_cep1:
-            cep = st.text_input("CEP", value=cliente_edicao["CEP"], max_chars=9)
+            cep_raw = st.text_input("CEP", value=cliente_edicao["CEP"], max_chars=9)
+            cep_limpo = re.sub(r"\D", "", cep_raw)[:8]
+            cep = f"{cep_limpo[:5]}-{cep_limpo[5:]}" if len(cep_limpo) == 8 else cep_raw
+
         with col_cep2:
             buscar_cep = st.form_submit_button("Buscar CEP")
 
@@ -821,7 +892,7 @@ def pagina_clientes():
 
         salvar = st.form_submit_button("💾 Salvar cliente")
 
-    # 🔎 Busca de CEP fora do form (para evitar bloqueio de atualização)
+    # 🔎 Busca de CEP fora do form
     if buscar_cep:
         cep_limpo = cep.replace("-", "").strip()
         if len(cep_limpo) == 8:
@@ -848,7 +919,7 @@ def pagina_clientes():
     # Salvamento do cliente
     if salvar and nome:
         novo_cliente = [
-            nome, telefone, email, tipo_cliente, cpf, cnpj,
+            nome, telefone, email, tipo_cliente, rg, cpf, cnpj,
             como_conseguiu,
             st.session_state["logradouro"],
             numero, complemento,
@@ -867,7 +938,6 @@ def pagina_clientes():
 
         salvar_dados(df, "clientes.csv")
 
-        # Limpa os dados de endereço salvos na sessão
         for campo in ["logradouro", "bairro", "cidade"]:
             st.session_state.pop(campo, None)
 
@@ -881,7 +951,9 @@ def pagina_clientes():
                 st.write(f"**Telefone:** {row['Telefone']}")
                 st.write(f"**Email:** {row['Email']}")
                 st.write(f"**Tipo:** {row['Tipo de Cliente']}")
-                if row['Tipo de Cliente'] == "Pessoa Física":
+                if row["RG"]:
+                    st.write(f"**RG:** {row['RG']}")
+                if row["Tipo de Cliente"] == "Pessoa Física":
                     st.write(f"**CPF:** {row['CPF']}")
                 else:
                     st.write(f"**CNPJ:** {row['CNPJ']}")
@@ -905,7 +977,6 @@ def pagina_clientes():
                         st.rerun()
     else:
         st.info("Nenhum cliente cadastrado ainda.")
-
 
 
 import unicodedata
@@ -1491,163 +1562,419 @@ def pagina_estoque():
 # =========================
 
 
-
 def pagina_custos():
+    import os
+    import pandas as pd
+    from datetime import datetime
+    import streamlit as st
+
     st.header("💸 Controle de Custos")
 
-    # ===============================
-    # 🔹 Carregar ou criar arquivo CSV
-    # ===============================
-    colunas = ["Descrição", "Categoria", "Valor", "Data", "Forma de Pagamento", "Observação"]
-    caminho = "custos.csv"
+    # ─────────────────────────────────────────
+    # Abas
+    # ─────────────────────────────────────────
+    aba = st.tabs(["📘 Lançar Custos", "🏦 Empréstimos"])
 
-    if os.path.exists(caminho):
-        try:
-            df = pd.read_csv(caminho, encoding="utf-8-sig")
-        except Exception:
+    # ============================================================
+    # 🧾 ABA 1 - LANÇAR CUSTOS (igual você já tinha)
+    # ============================================================
+    with aba[0]:
+        colunas = ["Descrição", "Categoria", "Valor", "Data", "Forma de Pagamento", "Observação"]
+        caminho = "custos.csv"
+
+        if os.path.exists(caminho):
+            try:
+                df = pd.read_csv(caminho, encoding="utf-8-sig")
+            except Exception:
+                df = pd.DataFrame(columns=colunas)
+        else:
             df = pd.DataFrame(columns=colunas)
-    else:
-        df = pd.DataFrame(columns=colunas)
-        df.to_csv(caminho, index=False, encoding="utf-8-sig")
+            df.to_csv(caminho, index=False, encoding="utf-8-sig")
 
-    # Corrige colunas e tipos
-    for c in colunas:
-        if c not in df.columns:
-            df[c] = ""
+        for c in colunas:
+            if c not in df.columns:
+                df[c] = ""
 
-    # Normaliza datas e valores
-    df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce").fillna(0.0)
-    df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.date
-    df = df.reindex(columns=colunas)
+        df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce").fillna(0.0)
+        df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.date
+        df = df.reindex(columns=colunas)
 
-    # ===============================
-    # 🔹 Filtro de período
-    # ===============================
-    st.subheader("📆 Filtro de Período")
-    hoje = datetime.now().date()
-    opcoes = ["Mês Atual", "Últimos 7 dias", "Últimos 30 dias", "Período Personalizado"]
-    filtro = st.radio("Selecione o intervalo:", opcoes, horizontal=True)
+        st.subheader("📆 Filtro de Período")
+        hoje = datetime.now().date()
+        opcoes = ["Mês Atual", "Últimos 7 dias", "Últimos 30 dias", "Período Personalizado"]
+        filtro = st.radio("Selecione o intervalo:", opcoes, horizontal=True)
 
-    if filtro == "Mês Atual":
-        data_inicial = hoje.replace(day=1)
-        data_final = hoje
-    elif filtro == "Últimos 7 dias":
-        data_inicial = hoje - pd.Timedelta(days=7)
-        data_final = hoje
-    elif filtro == "Últimos 30 dias":
-        data_inicial = hoje - pd.Timedelta(days=30)
-        data_final = hoje
-    else:
-        c1, c2 = st.columns(2)
-        with c1:
-            data_inicial = st.date_input("Data inicial", value=hoje.replace(day=1))
-        with c2:
-            data_final = st.date_input("Data final", value=hoje)
+        if filtro == "Mês Atual":
+            data_inicial = hoje.replace(day=1)
+            data_final = hoje
+        elif filtro == "Últimos 7 dias":
+            data_inicial = hoje - pd.Timedelta(days=7)
+            data_final = hoje
+        elif filtro == "Últimos 30 dias":
+            data_inicial = hoje - pd.Timedelta(days=30)
+            data_final = hoje
+        else:
+            c1, c2 = st.columns(2)
+            with c1:
+                data_inicial = st.date_input("Data inicial", value=hoje.replace(day=1))
+            with c2:
+                data_final = st.date_input("Data final", value=hoje)
 
-    # Filtra dados por data
-    filtrado = df[
-        (pd.to_datetime(df["Data"]) >= pd.to_datetime(data_inicial)) &
-        (pd.to_datetime(df["Data"]) <= pd.to_datetime(data_final))
-    ].copy()
+        filtrado = df[
+            (pd.to_datetime(df["Data"]) >= pd.to_datetime(data_inicial)) &
+            (pd.to_datetime(df["Data"]) <= pd.to_datetime(data_final))
+        ].copy()
 
-    # ===============================
-    # 🔹 Indicadores principais
-    # ===============================
-    total_periodo = filtrado["Valor"].sum()
-    total_geral = df["Valor"].sum()
-    total_itens = len(df)
+        total_periodo = filtrado["Valor"].sum()
+        total_geral = df["Valor"].sum()
+        total_itens = len(df)
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("💰 Total no Período", f"R$ {total_periodo:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-    c2.metric("📊 Total Geral", f"R$ {total_geral:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-    c3.metric("🧾 Lançamentos", total_itens)
+        c1, c2, c3 = st.columns(3)
+        c1.metric("💰 Total no Período", f"R$ {total_periodo:,.2f}")
+        c2.metric("📊 Total Geral", f"R$ {total_geral:,.2f}")
+        c3.metric("🧾 Lançamentos", total_itens)
 
-    st.divider()
+        st.divider()
 
-    # ===============================
-    # 🔹 Formulário de cadastro
-    # ===============================
-    with st.form("form_custo"):
-        descricao = st.text_input("Descrição")
-        categoria = st.selectbox(
-            "Categoria",
-            ["Combustível", "Compra de Brinquedo", "Manutenção", "Frete", "Monitor", "Auxiliar de Montagem", "Outros"]
-        )
-        valor = st.number_input("Valor (R$)", min_value=0.0, step=10.0)
-        data = st.date_input("Data do custo", value=datetime.today())
-        forma = st.selectbox(
-            "Forma de Pagamento",
-            ["Pix", "Dinheiro", "Cartão de Crédito", "Cartão de Débito", "Transferência", "Outro"]
-        )
-        observacao = st.text_area("Observação (opcional)")
-
-        salvar = st.form_submit_button("💾 Salvar custo")
-
-        if salvar:
-            if descricao and valor > 0:
-                nova_data = str(data)
-                novo = {
-                    "Descrição": descricao,
-                    "Categoria": categoria,
-                    "Valor": valor,
-                    "Data": nova_data,
-                    "Forma de Pagamento": forma,
-                    "Observação": observacao
-                }
-                df.loc[len(df)] = novo
-                df.to_csv(caminho, index=False, encoding="utf-8-sig")
-                st.success(f"✅ Custo '{descricao}' registrado com sucesso!")
-                st.rerun()
-            else:
-                st.warning("⚠️ Informe uma descrição e um valor maior que zero.")
-
-    st.divider()
-
-    # ===============================
-    # 🔹 Resumo por categoria
-    # ===============================
-    if not filtrado.empty:
-        st.subheader("📊 Resumo por Categoria")
-        resumo = filtrado.groupby("Categoria")["Valor"].sum().reset_index().sort_values("Valor", ascending=False)
-        for _, row in resumo.iterrows():
-            st.markdown(
-                f"""
-                <div style="display:flex;justify-content:space-between;
-                            background:#f9f9f9;padding:10px 15px;
-                            border-left:6px solid #7A5FFF;border-radius:8px;
-                            margin-bottom:8px;">
-                    <strong>{row['Categoria']}</strong>
-                    <span>R$ {row['Valor']:.2f}</span>
-                </div>
-                """,
-                unsafe_allow_html=True
+        with st.form("form_custo"):
+            descricao = st.text_input("Descrição")
+            categoria = st.selectbox(
+                "Categoria",
+                ["Combustível", "Compra de Brinquedo", "Manutenção", "Anuncio", "Frete", "Monitor", "Auxiliar de Montagem", "Comida", "Limpeza Casa", "Outros"]
             )
-    else:
-        st.info("Nenhum gasto encontrado no período selecionado.")
+            valor = st.number_input("Valor (R$)", min_value=0.0, step=10.0)
+            data = st.date_input("Data do custo", value=datetime.today())
+            forma = st.selectbox(
+                "Forma de Pagamento",
+                ["Pix", "Dinheiro", "Cartão de Crédito", "Cartão de Débito", "Transferência", "Outro"]
+            )
+            observacao = st.text_area("Observação (opcional)")
 
-    st.divider()
+            salvar = st.form_submit_button("💾 Salvar custo")
 
-    # ===============================
-    # 🔹 Lista detalhada
-    # ===============================
-    st.subheader("📋 Custos Registrados")
-    if not filtrado.empty:
-        df_sorted = filtrado.sort_values(by="Data", ascending=False)
-        for i, row in df_sorted.iterrows():
-            with st.expander(f"💸 {row['Descrição']} - {row['Categoria']} ({row['Data']})"):
-                st.write(f"**Valor:** R$ {row['Valor']:.2f}")
-                st.write(f"**Forma de Pagamento:** {row['Forma de Pagamento']}")
-                st.write(f"**Observação:** {row['Observação'] or '-'}")
+            if salvar:
+                if descricao and valor > 0:
+                    novo = {
+                        "Descrição": descricao,
+                        "Categoria": categoria,
+                        "Valor": valor,
+                        "Data": str(data),
+                        "Forma de Pagamento": forma,
+                        "Observação": observacao
+                    }
+                    df.loc[len(df)] = novo
+                    df.to_csv(caminho, index=False, encoding="utf-8-sig")
+                    st.success(f"✅ Custo '{descricao}' registrado com sucesso!")
+                    st.rerun()
+                else:
+                    st.warning("⚠️ Informe uma descrição e um valor maior que zero.")
 
-                c1, c2 = st.columns(2)
-                with c1:
-                    if st.button("🗑️ Excluir", key=f"del_{i}"):
-                        df = df.drop(i).reset_index(drop=True)
-                        df.to_csv(caminho, index=False, encoding="utf-8-sig")
-                        st.warning(f"🗑️ Custo '{row['Descrição']}' excluído!")
-                        st.rerun()
-    else:
-        st.info("Nenhum custo cadastrado ainda.")
+        st.divider()
+
+        if not filtrado.empty:
+            st.subheader("📊 Resumo por Categoria")
+            resumo = filtrado.groupby("Categoria")["Valor"].sum().reset_index().sort_values("Valor", ascending=False)
+            for _, row in resumo.iterrows():
+                st.markdown(
+                    f"""
+                    <div style="display:flex;justify-content:space-between;
+                                background:#f9f9f9;padding:10px 15px;
+                                border-left:6px solid #7A5FFF;border-radius:8px;
+                                margin-bottom:8px;">
+                        <strong>{row['Categoria']}</strong>
+                        <span>R$ {row['Valor']:.2f}</span>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+        else:
+            st.info("Nenhum gasto encontrado no período selecionado.")
+
+        st.divider()
+
+        st.subheader("📋 Custos Registrados")
+        if not filtrado.empty:
+            df_sorted = filtrado.sort_values(by="Data", ascending=False)
+            for i, row in df_sorted.iterrows():
+                with st.expander(f"💸 {row['Descrição']} - {row['Categoria']} ({row['Data']})"):
+                    st.write(f"**Valor:** R$ {row['Valor']:.2f}")
+                    st.write(f"**Forma de Pagamento:** {row['Forma de Pagamento']}")
+                    st.write(f"**Observação:** {row['Observação'] or '-'}")
+
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        if st.button("🗑️ Excluir", key=f"del_{i}"):
+                            df = df.drop(i).reset_index(drop=True)
+                            df.to_csv(caminho, index=False, encoding="utf-8-sig")
+                            st.warning(f"🗑️ Custo '{row['Descrição']}' excluído!")
+                            st.rerun()
+        else:
+            st.info("Nenhum custo cadastrado ainda.")
+
+    # ============================================================
+    # 🏦 ABA 2 - EMPRÉSTIMOS (com edição/exclusão de pagamentos)
+    # ============================================================
+    with aba[1]:
+        st.subheader("🏦 Controle de Empréstimos")
+
+        arq_emp = "emprestimos.csv"
+        arq_pag = "pagamentos_emprestimos.csv"
+
+        cols_emp = ["EmpID", "Descrição", "Observação", "Valor Recebido", "Valor a Pagar",
+                    "Juros (%)", "Parcelas", "Valor Pendente", "Data", "Status"]
+        cols_pag = ["PagID", "EmpID", "Descrição", "Valor Pago", "Data Pagamento"]
+
+        # Garante existência dos arquivos
+        if not os.path.exists(arq_emp):
+            pd.DataFrame(columns=cols_emp).to_csv(arq_emp, index=False, encoding="utf-8-sig")
+        if not os.path.exists(arq_pag):
+            pd.DataFrame(columns=cols_pag).to_csv(arq_pag, index=False, encoding="utf-8-sig")
+
+        df_emp = pd.read_csv(arq_emp)
+        df_pag = pd.read_csv(arq_pag)
+
+        # Backcompat: cria EmpID se não existir
+        if "EmpID" not in df_emp.columns:
+            df_emp.insert(0, "EmpID", range(1, len(df_emp) + 1))
+        # Backcompat: cria campos faltantes
+        for c in cols_emp:
+            if c not in df_emp.columns:
+                df_emp[c] = "" if c in ["Descrição", "Observação", "Data", "Status"] else 0
+
+        # Backcompat pagamentos: gera PagID/EmpID se faltar
+        if "PagID" not in df_pag.columns:
+            df_pag.insert(0, "PagID", range(1, len(df_pag) + 1))
+        if "EmpID" not in df_pag.columns:
+            df_pag["EmpID"] = None
+            # tentativa de mapear por descrição quando possível
+            mapa = df_emp.drop_duplicates(subset=["Descrição"])[["Descrição", "EmpID"]].set_index("Descrição")["EmpID"].to_dict()
+            df_pag["EmpID"] = df_pag["Descrição"].map(mapa)
+
+        # Tipos e limpeza
+        num_cols_emp = ["Valor Recebido", "Valor a Pagar", "Juros (%)", "Parcelas", "Valor Pendente"]
+        for c in num_cols_emp:
+            df_emp[c] = pd.to_numeric(df_emp[c], errors="coerce").fillna(0.0)
+        df_emp["Parcelas"] = df_emp["Parcelas"].astype(int, errors="ignore")
+        if not df_emp.empty:
+            df_emp["Data"] = pd.to_datetime(df_emp["Data"], errors="coerce").dt.date
+
+        df_pag["Valor Pago"] = pd.to_numeric(df_pag["Valor Pago"], errors="coerce").fillna(0.0)
+        if not df_pag.empty:
+            df_pag["Data Pagamento"] = pd.to_datetime(df_pag["Data Pagamento"], errors="coerce").dt.date
+
+        # Recalcula "Valor Pendente" e "Status" para todos (segurança)
+        if not df_emp.empty:
+            soma_por_empid = df_pag.groupby("EmpID")["Valor Pago"].sum().to_dict()
+            alterou = False
+            for idx, row in df_emp.iterrows():
+                pagos = soma_por_empid.get(row["EmpID"], 0.0)
+                novo_pendente = max(0.0, float(row["Valor a Pagar"]) - float(pagos))
+                novo_status = "🟢 Quitado" if novo_pendente <= 0 else "🟡 Pendente"
+                if (abs(novo_pendente - float(row["Valor Pendente"])) > 1e-6) or (row.get("Status", "") != novo_status):
+                    df_emp.at[idx, "Valor Pendente"] = novo_pendente
+                    df_emp.at[idx, "Status"] = novo_status
+                    alterou = True
+            if alterou:
+                df_emp.to_csv(arq_emp, index=False, encoding="utf-8-sig")
+
+        # Cards
+        total_recebido = df_emp["Valor Recebido"].sum() if not df_emp.empty else 0
+        total_pagar = df_emp["Valor a Pagar"].sum() if not df_emp.empty else 0
+        total_pendente = df_emp["Valor Pendente"].sum() if not df_emp.empty else 0
+        total_pago = total_pagar - total_pendente if not df_emp.empty else 0
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("💰 Valor Recebido", f"R$ {total_recebido:,.2f}")
+        c2.metric("💸 Total a Pagar", f"R$ {total_pagar:,.2f}")
+        c3.metric("✅ Pago", f"R$ {total_pago:,.2f}")
+        c4.metric("🟡 Pendente", f"R$ {total_pendente:,.2f}")
+
+        st.divider()
+
+        # Filtro Status
+        filtro_status = st.radio("Filtrar por status:", ["Todos", "🟢 Quitado", "🟡 Pendente"], horizontal=True)
+        df_lista = df_emp.copy()
+        if filtro_status != "Todos":
+            df_lista = df_lista[df_lista["Status"] == filtro_status]
+
+        # Controle de edição
+        if "editando_emp" not in st.session_state:
+            st.session_state.editando_emp = None
+
+        # Cadastro ou Edição de empréstimo
+        if st.session_state.editando_emp is None:
+            with st.form("novo_emprestimo"):
+                descricao = st.text_input("Descrição do Empréstimo (Banco/Pessoa)")
+                obs = st.text_area("Observação (motivo do empréstimo)")
+                valor_recebido = st.number_input("Valor Recebido (R$)", min_value=0.0, step=100.0)
+                valor_pagar = st.number_input("Valor Total a Pagar (R$)", min_value=0.0, step=100.0)
+                parcelas = st.number_input("Qtd. Parcelas (informativo)", min_value=1, step=1)
+                data_emp = st.date_input("Data do Empréstimo", value=datetime.today())
+
+                salvar_emp = st.form_submit_button("💾 Registrar Empréstimo")
+
+                if salvar_emp and descricao and valor_recebido > 0 and valor_pagar > 0:
+                    juros = round(((valor_pagar - valor_recebido) / valor_recebido) * 100, 2)
+                    novo_empid = 1 if df_emp.empty else int(df_emp["EmpID"].max()) + 1
+                    novo = {
+                        "EmpID": novo_empid,
+                        "Descrição": descricao,
+                        "Observação": obs,
+                        "Valor Recebido": valor_recebido,
+                        "Valor a Pagar": valor_pagar,
+                        "Juros (%)": juros,
+                        "Parcelas": int(parcelas),
+                        "Valor Pendente": valor_pagar,
+                        "Data": str(data_emp),
+                        "Status": "🟡 Pendente"
+                    }
+                    df_emp.loc[len(df_emp)] = novo
+                    df_emp.to_csv(arq_emp, index=False, encoding="utf-8-sig")
+                    st.success("✅ Empréstimo registrado com sucesso!")
+                    st.rerun()
+        else:
+            i = st.session_state.editando_emp
+            row = df_emp.loc[df_emp["EmpID"] == i].iloc[0]
+
+            with st.form("editar_emprestimo"):
+                st.info(f"✏️ Editando empréstimo: {row['Descrição']}")
+                descricao = st.text_input("Descrição", value=row["Descrição"])
+                obs = st.text_area("Observação", value=row["Observação"])
+                valor_recebido = st.number_input("Valor Recebido (R$)", value=float(row["Valor Recebido"]), min_value=0.0, step=100.0)
+                valor_pagar = st.number_input("Valor Total a Pagar (R$)", value=float(row["Valor a Pagar"]), min_value=0.0, step=100.0)
+                parcelas = st.number_input("Qtd. Parcelas", value=int(row["Parcelas"]), min_value=1, step=1)
+                data_emp = st.date_input("Data", value=pd.to_datetime(row["Data"]))
+
+                salvar_edicao = st.form_submit_button("💾 Salvar Alterações")
+                cancelar_edicao = st.form_submit_button("❌ Cancelar")
+
+                if cancelar_edicao:
+                    st.session_state.editando_emp = None
+                    st.rerun()
+
+                if salvar_edicao:
+                    juros = round(((valor_pagar - valor_recebido) / valor_recebido) * 100, 2)
+                    # Recalcula pendente a partir dos pagamentos existentes
+                    pagos = df_pag.loc[df_pag["EmpID"] == i, "Valor Pago"].sum()
+                    novo_pendente = max(0.0, float(valor_pagar) - float(pagos))
+                    status = "🟢 Quitado" if novo_pendente <= 0 else "🟡 Pendente"
+
+                    df_emp.loc[df_emp["EmpID"] == i, :] = [
+                        i, descricao, obs, float(valor_recebido), float(valor_pagar),
+                        juros, int(parcelas), novo_pendente, str(data_emp), status
+                    ]
+                    df_emp.to_csv(arq_emp, index=False, encoding="utf-8-sig")
+                    st.success("✅ Empréstimo atualizado com sucesso!")
+                    st.session_state.editando_emp = None
+                    st.rerun()
+
+        st.divider()
+
+        # Listagem dos empréstimos
+        if not df_lista.empty:
+            for _, row in df_lista.sort_values("Data").iterrows():
+                empid = int(row["EmpID"])
+                pendente = float(row["Valor Pendente"])
+                status = row["Status"]
+                data_emp = pd.to_datetime(row["Data"]).date()
+                # Previsão de quitação = data + parcelas meses
+                try:
+                    previsao_quit = (pd.to_datetime(row["Data"]) + pd.DateOffset(months=int(row["Parcelas"]))).date()
+                    previsao_str = previsao_quit.strftime("%d/%m/%Y")
+                except Exception:
+                    previsao_str = "-"
+
+                with st.expander(f"🏦 {row['Descrição']} — {status} — Pendente: R$ {pendente:,.2f}"):
+                    st.write(f"**Observação:** {row['Observação'] or '-'}")
+                    st.write(f"**Valor Recebido:** R$ {row['Valor Recebido']:.2f}")
+                    st.write(f"**Valor a Pagar:** R$ {row['Valor a Pagar']:.2f}")
+                    st.write(f"**Juros:** {row['Juros (%)']}%")
+                    st.write(f"**Parcelas:** {int(row['Parcelas'])}")
+                    st.write(f"**Data:** {data_emp.strftime('%d/%m/%Y')}")
+                    st.write(f"**Previsão de quitação:** {previsao_str}")
+
+                    st.markdown("---")
+                    st.write("### 💵 Registrar pagamento")
+                    with st.form(f"form_pag_{empid}"):
+                        valor_pago = st.number_input("Valor pago (R$)", min_value=0.0, step=50.0, key=f"pag_val_{empid}")
+                        data_pag = st.date_input("Data do pagamento", value=datetime.today(), key=f"pag_data_{empid}")
+                        pagar = st.form_submit_button("💰 Registrar Pagamento")
+
+                        if pagar and valor_pago > 0:
+                            novo_pagid = 1 if df_pag.empty else int(df_pag["PagID"].max()) + 1
+                            df_pag.loc[len(df_pag)] = [novo_pagid, empid, row["Descrição"], float(valor_pago), str(data_pag)]
+                            # Recalcula pendente/status
+                            pagos = df_pag.loc[df_pag["EmpID"] == empid, "Valor Pago"].sum()
+                            novo_pendente = max(0.0, float(row["Valor a Pagar"]) - float(pagos))
+                            novo_status = "🟢 Quitado" if novo_pendente <= 0 else "🟡 Pendente"
+                            df_emp.loc[df_emp["EmpID"] == empid, ["Valor Pendente", "Status"]] = [novo_pendente, novo_status]
+
+                            df_pag.to_csv(arq_pag, index=False, encoding="utf-8-sig")
+                            df_emp.to_csv(arq_emp, index=False, encoding="utf-8-sig")
+                            st.success(f"✅ Pagamento de R$ {valor_pago:.2f} registrado!")
+                            st.rerun()
+
+                    # Histórico de pagamentos (com editar/excluir)
+                    hist = df_pag[df_pag["EmpID"] == empid].sort_values("Data Pagamento")
+                    if not hist.empty:
+                        st.markdown("### 📜 Histórico de Pagamentos:")
+                        for _, pg in hist.iterrows():
+                            pagid = int(pg["PagID"])
+                            with st.expander(f"Pagamento #{pagid} — R$ {pg['Valor Pago']:.2f} em {pd.to_datetime(pg['Data Pagamento']).strftime('%d/%m/%Y')}"):
+                                with st.form(f"edit_pag_{pagid}"):
+                                    novo_valor = st.number_input("Valor pago", value=float(pg["Valor Pago"]), min_value=0.0, step=50.0, key=f"edit_val_{pagid}")
+                                    nova_data = st.date_input("Data do pagamento", value=pd.to_datetime(pg["Data Pagamento"]), key=f"edit_data_{pagid}")
+
+                                    c_ed, c_del = st.columns(2)
+                                    with c_ed:
+                                        salvar_edit = st.form_submit_button("💾 Salvar edição")
+                                    with c_del:
+                                        confirmar_del = st.checkbox("Confirmar exclusão", key=f"chk_del_{pagid}")
+                                        excluir_pag = st.form_submit_button("🗑️ Excluir pagamento")
+
+                                    if salvar_edit:
+                                        df_pag.loc[df_pag["PagID"] == pagid, ["Valor Pago", "Data Pagamento"]] = [float(novo_valor), str(nova_data)]
+                                        # Recalcula pendente/status
+                                        pagos = df_pag.loc[df_pag["EmpID"] == empid, "Valor Pago"].sum()
+                                        novo_pendente = max(0.0, float(row["Valor a Pagar"]) - float(pagos))
+                                        novo_status = "🟢 Quitado" if novo_pendente <= 0 else "🟡 Pendente"
+                                        df_emp.loc[df_emp["EmpID"] == empid, ["Valor Pendente", "Status"]] = [novo_pendente, novo_status]
+
+                                        df_pag.to_csv(arq_pag, index=False, encoding="utf-8-sig")
+                                        df_emp.to_csv(arq_emp, index=False, encoding="utf-8-sig")
+                                        st.success("✅ Pagamento atualizado!")
+                                        st.rerun()
+
+                                    if excluir_pag and confirmar_del:
+                                        df_pag = df_pag[df_pag["PagID"] != pagid].reset_index(drop=True)
+                                        # Recalcula pendente/status
+                                        pagos = df_pag.loc[df_pag["EmpID"] == empid, "Valor Pago"].sum()
+                                        novo_pendente = max(0.0, float(row["Valor a Pagar"]) - float(pagos))
+                                        novo_status = "🟢 Quitado" if novo_pendente <= 0 else "🟡 Pendente"
+                                        df_emp.loc[df_emp["EmpID"] == empid, ["Valor Pendente", "Status"]] = [novo_pendente, novo_status]
+
+                                        df_pag.to_csv(arq_pag, index=False, encoding="utf-8-sig")
+                                        df_emp.to_csv(arq_emp, index=False, encoding="utf-8-sig")
+                                        st.warning("🗑️ Pagamento excluído!")
+                                        st.rerun()
+
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        if st.button("✏️ Editar Empréstimo", key=f"edit_emp_{empid}"):
+                            st.session_state.editando_emp = empid
+                            st.rerun()
+                    with c2:
+                        if st.button("🗑️ Excluir Empréstimo", key=f"del_emp_{empid}"):
+                            # Exclui pagamentos do emprestimo
+                            df_pag = df_pag[df_pag["EmpID"] != empid].reset_index(drop=True)
+                            df_emp = df_emp[df_emp["EmpID"] != empid].reset_index(drop=True)
+                            df_pag.to_csv(arq_pag, index=False, encoding="utf-8-sig")
+                            df_emp.to_csv(arq_emp, index=False, encoding="utf-8-sig")
+                            st.warning(f"🗑️ Empréstimo '{row['Descrição']}' e seus pagamentos foram excluídos!")
+                            st.rerun()
+        else:
+            st.info("Nenhum empréstimo registrado ainda.")
+
 
 # ========================================
 # PAGINA AGENDA
@@ -1852,7 +2179,6 @@ def pagina_agenda():
             )
 
 
-
 def pagina_checklist():
     import pandas as pd
     from datetime import datetime
@@ -1868,6 +2194,8 @@ def pagina_checklist():
         "reservas.csv",
         ["Cliente", "Brinquedos", "Data", "Status"]
     )
+
+    brinquedos_cadastrados = carregar_dados("brinquedos.csv", ["Nome"])
     pecas = carregar_dados("pecas_brinquedos.csv", ["Brinquedo", "Item"])
     checklist_file = "checklist.csv"
 
@@ -1888,195 +2216,179 @@ def pagina_checklist():
             checklist[col] = ""
 
     # ========================================
-    # SELEÇÃO DE RESERVA
+    # ABAS
     # ========================================
-    if reservas.empty:
-        st.info("Nenhuma reserva encontrada.")
-        return
-
-    reservas["Label"] = reservas.index.astype(str) + " - " + reservas["Cliente"] + " (" + reservas["Data"].astype(str) + ")"
-    sel_reserva = st.selectbox("Selecione a reserva:", reservas["Label"])
-
-    if not sel_reserva:
-        return
-
-    reserva_idx = int(sel_reserva.split(" - ")[0])
-    reserva = reservas.loc[reserva_idx]
-    cliente = reserva["Cliente"]
-    brinquedos_lista = [b.strip() for b in str(reserva["Brinquedos"]).split(",") if b.strip()]
+    aba1, aba2 = st.tabs(["✅ Realizar Check-list", "🧩 Cadastrar Peças"])
 
     # ========================================
-    # VERIFICAÇÃO DE STATUS DE CHECKLISTS
+    # ABA 1 - REALIZAR CHECK-LIST
     # ========================================
-    hist_reserva = checklist[checklist["Reserva_ID"] == reserva_idx]
-    pendentes = []
-    completos = 0
-    status_brinquedos = {}
-
-    for brinquedo in brinquedos_lista:
-        hist_entrega = not hist_reserva[(hist_reserva["Brinquedo"].str.lower() == brinquedo.lower()) &
-                                        (hist_reserva["Tipo"] == "Entrega")].empty
-        hist_retirada = not hist_reserva[(hist_reserva["Brinquedo"].str.lower() == brinquedo.lower()) &
-                                         (hist_reserva["Tipo"] == "Retirada")].empty
-
-        status_brinquedos[brinquedo] = {"Entrega": hist_entrega, "Retirada": hist_retirada}
-
-        if hist_entrega and hist_retirada:
-            completos += 1
-        else:
-            pendentes.append(brinquedo)
-
-    # ========================================
-    # SELO DE STATUS GERAL
-    # ========================================
-    total = len(brinquedos_lista)
-    if completos == total:
-        cor, emoji, texto = "#D4EFDF", "🎯", "Todos os brinquedos estão com checklist completo!"
-    elif completos > 0:
-        cor, emoji, texto = "#FCF3CF", "⚠️", "Alguns brinquedos estão parcialmente conferidos."
-    else:
-        cor, emoji, texto = "#FADBD8", "⛔", "Nenhum checklist foi realizado ainda."
-
-    st.markdown(
-        f"<div style='background-color:{cor};padding:10px;border-radius:8px;margin-bottom:10px;'>"
-        f"<b>{emoji} Status geral:</b> {texto}</div>",
-        unsafe_allow_html=True
-    )
-
-    # Progresso geral
-    st.markdown(
-        f"<div style='background-color:#F0F8FF;padding:8px;border-radius:6px;margin-bottom:10px;'>"
-        f"📊 <b>Progresso geral:</b> {completos} de {len(brinquedos_lista)} brinquedo(s) completos."
-        f"</div>",
-        unsafe_allow_html=True
-    )
-
-    # ========================================
-    # SELEÇÃO DE BRINQUEDO E TIPO
-    # ========================================
-    brinquedo_sel = st.selectbox("Brinquedo:", brinquedos_lista)
-    tipo_sel = st.radio("Tipo de checklist:", ["Entrega (Saída)", "Retirada (Volta)"], horizontal=True)
-    tipo = "Entrega" if "Entrega" in tipo_sel else "Retirada"
-
-    # Status do brinquedo selecionado
-    if brinquedo_sel in status_brinquedos:
-        s = status_brinquedos[brinquedo_sel]
-        msg = f"**Brinquedo:** {brinquedo_sel}"
-        msg += " 🟩 Entrega" if s["Entrega"] else " 🔴 Entrega pendente"
-        msg += " 🟦 Retirada" if s["Retirada"] else " 🔴 Retirada pendente"
-        st.markdown(
-            f"<div style='background-color:#D4EFDF;padding:8px;border-radius:6px;margin-bottom:8px;'>{msg}</div>",
-            unsafe_allow_html=True
-        )
-
-    # ========================================
-    # CARREGA PEÇAS DO BRINQUEDO
-    # ========================================
-    pecas_brinquedo = pecas[pecas["Brinquedo"].str.lower() == brinquedo_sel.lower()]
-    if pecas_brinquedo.empty:
-        st.warning("⚠️ Nenhuma peça cadastrada para este brinquedo no arquivo pecas_brinquedos.csv.")
-        return
-
-    st.markdown(f"### Itens de verificação – {brinquedo_sel}")
-
-    # Preenche automaticamente conforme histórico
-    historico_tipo = hist_reserva[
-        (hist_reserva["Brinquedo"].str.lower() == brinquedo_sel.lower()) &
-        (hist_reserva["Tipo"] == tipo)
-    ]
-
-    checks = {}
-    for i, row in pecas_brinquedo.iterrows():
-        item = row["Item"]
-        if not historico_tipo.empty:
-            registro_item = historico_tipo[historico_tipo["Item"] == item]
-            marcado = not registro_item.empty and registro_item.iloc[-1]["OK"] == "✅"
-        else:
-            marcado = False
-        checks[item] = st.checkbox(item, value=marcado, key=f"{tipo}_{i}")
-
-    # Observações
-    observacao_default = ""
-    if not historico_tipo.empty and isinstance(historico_tipo.iloc[-1]["Observação"], str):
-        observacao_default = historico_tipo.iloc[-1]["Observação"]
-
-    observacao = st.text_area("Observações adicionais (opcional):", value=observacao_default)
-
-    # ========================================
-    # CONFERIDO POR (USUÁRIO LOGADO)
-    # ========================================
-    usuario_logado = st.session_state.get("usuario", "Usuário não identificado")
-    st.info(f"👤 Conferido por: **{usuario_logado}**")
-    conferido_por = usuario_logado
-
-    # ========================================
-    # BOTÃO SALVAR
-    # ========================================
-    if st.button("💾 Salvar check-list"):
-        registros = []
-        tz_sp = pytz.timezone("America/Sao_Paulo")
-        data_atual_sp = datetime.now(tz_sp).strftime("%Y-%m-%d %H:%M")
-
-        for item, marcado in checks.items():
-            registros.append({
-                "Reserva_ID": reserva_idx,
-                "Cliente": cliente,
-                "Brinquedo": brinquedo_sel,
-                "Tipo": tipo,
-                "Item": item,
-                "OK": "✅" if marcado else "❌",
-                "Data": data_atual_sp,
-                "Observação": observacao,
-                "Conferido_por": conferido_por,
-                "Completo": "✅" if all(checks.values()) else "⚠️"
-            })
-
-        df_novos = pd.DataFrame(registros)
-        checklist = pd.concat([checklist, df_novos], ignore_index=True)
-        checklist.to_csv(checklist_file, index=False, encoding="utf-8-sig")
-
-        st.success(f"✅ Check-list de {tipo.lower()} salvo com sucesso para {brinquedo_sel}!")
-        st.balloons()
-
-    # ========================================
-    # ABA: HISTÓRICO E INDICADORES
-    # ========================================
-    st.divider()
-    aba1, aba2 = st.tabs(["📜 Histórico de check-lists", "📊 Indicadores mensais"])
-
-    # ---------- HISTÓRICO ----------
     with aba1:
-        filtro_tipo = st.multiselect("Filtrar por tipo:", ["Entrega", "Retirada"], default=["Entrega", "Retirada"])
-        filtro_cliente = st.text_input("Filtrar por cliente (opcional):", "")
-        filtro_brinquedo = st.text_input("Filtrar por brinquedo (opcional):", "")
+        if reservas.empty:
+            st.info("Nenhuma reserva encontrada.")
+            return
 
-        hist = checklist.copy()
-        if filtro_tipo:
-            hist = hist[hist["Tipo"].isin(filtro_tipo)]
-        if filtro_cliente:
-            hist = hist[hist["Cliente"].str.contains(filtro_cliente, case=False, na=False)]
-        if filtro_brinquedo:
-            hist = hist[hist["Brinquedo"].str.contains(filtro_brinquedo, case=False, na=False)]
+        reservas["Label"] = reservas.index.astype(str) + " - " + reservas["Cliente"] + " (" + reservas["Data"].astype(str) + ")"
+        sel_reserva = st.selectbox("Selecione a reserva:", reservas["Label"])
 
+        if not sel_reserva:
+            return
+
+        reserva_idx = int(sel_reserva.split(" - ")[0])
+        reserva = reservas.loc[reserva_idx]
+        cliente = reserva["Cliente"]
+        brinquedos_lista = [b.strip() for b in str(reserva["Brinquedos"]).split(",") if b.strip()]
+
+        # ======== CARD DE ANDAMENTO ========
+        total_brinquedos = len(brinquedos_lista)
+        brinquedos_completos = checklist[
+            (checklist["Reserva_ID"] == reserva_idx) &
+            (checklist["Completo"] == "✅")
+        ]["Brinquedo"].nunique()
+        pendentes = total_brinquedos - brinquedos_completos
+
+        progresso = (brinquedos_completos / total_brinquedos * 100) if total_brinquedos > 0 else 0
+
+        if brinquedos_completos == total_brinquedos:
+            cor, icone, texto = "#2ECC71", "✅", "Todos conferidos!"
+        elif brinquedos_completos > 0:
+            cor, icone, texto = "#F1C40F", "🟡", "Parcialmente conferidos"
+        else:
+            cor, icone, texto = "#E74C3C", "🔴", "Nenhum brinquedo conferido"
+
+        st.markdown(f"""
+            <div style="background-color:#f9f9f9;
+                        border-left:6px solid {cor};
+                        border-radius:10px;
+                        padding:12px 20px 18px 20px;
+                        margin-bottom:15px;
+                        box-shadow:2px 2px 8px rgba(0,0,0,0.1);">
+                <h4 style="margin:0;color:{cor};">
+                    {icone} {texto} — {brinquedos_completos}/{total_brinquedos} brinquedos conferidos
+                </h4>
+                <div style="margin-top:10px;width:100%;background:#eee;border-radius:8px;overflow:hidden;">
+                    <div style="height:18px;
+                                width:{progresso:.1f}%;
+                                background:{cor};
+                                transition:width 0.8s ease;
+                                border-radius:8px;">
+                    </div>
+                </div>
+                <p style="margin-top:6px;color:#555;font-size:13px;">
+                    🎯 Progresso: {progresso:.1f}% concluído
+                </p>
+            </div>
+        """, unsafe_allow_html=True)
+
+        # ======== SELEÇÃO DE BRINQUEDO ========
+        brinquedo_sel = st.selectbox("Brinquedo:", brinquedos_lista)
+        tipo_sel = st.radio("Tipo de check-list:", ["Entrega (Saída)", "Retirada (Volta)"], horizontal=True)
+        tipo = "Entrega" if "Entrega" in tipo_sel else "Retirada"
+
+        # Confere status de checklist
+        status_checklist = checklist[
+            (checklist["Reserva_ID"] == reserva_idx) &
+            (checklist["Brinquedo"] == brinquedo_sel) &
+            (checklist["Tipo"] == tipo)
+        ]
+        if not status_checklist.empty:
+            st.success("✅ Este brinquedo já possui check-list registrado para este tipo.")
+        else:
+            st.warning("⚠️ Nenhum check-list registrado para este brinquedo ainda.")
+
+        # Carrega peças
+        pecas_brinquedo = pecas[pecas["Brinquedo"].str.lower() == brinquedo_sel.lower()]
+        if pecas_brinquedo.empty:
+            st.warning("⚠️ Nenhuma peça cadastrada para este brinquedo.")
+            return
+
+        st.markdown(f"### Itens de verificação – {brinquedo_sel}")
+        checks = {row["Item"]: st.checkbox(row["Item"], key=f"{tipo}_{i}") for i, row in pecas_brinquedo.iterrows()}
+        observacao = st.text_area("Observações (opcional):")
+
+        # Usuário logado
+        usuario_logado = st.session_state.get("usuario", "Usuário não identificado")
+
+        # Botão salvar
+        if st.button("💾 Salvar check-list"):
+            registros = []
+            tz_sp = pytz.timezone("America/Sao_Paulo")
+            data_hora = datetime.now(tz_sp).strftime("%Y-%m-%d %H:%M")
+
+            completo = "✅" if all(checks.values()) else "❌"
+
+            for item, marcado in checks.items():
+                registros.append({
+                    "Reserva_ID": reserva_idx,
+                    "Cliente": cliente,
+                    "Brinquedo": brinquedo_sel,
+                    "Tipo": tipo,
+                    "Item": item,
+                    "OK": "✅" if marcado else "❌",
+                    "Data": data_hora,
+                    "Observação": observacao,
+                    "Conferido_por": usuario_logado,
+                    "Completo": completo
+                })
+
+            df_novos = pd.DataFrame(registros)
+            checklist = pd.concat([checklist, df_novos], ignore_index=True)
+            checklist.to_csv(checklist_file, index=False, encoding="utf-8-sig")
+
+            st.success("✅ Check-list salvo com sucesso!")
+            st.rerun()
+
+        # Histórico
+        st.divider()
+        st.subheader("📜 Histórico de check-lists")
+
+        hist = checklist[checklist["Reserva_ID"] == reserva_idx]
         if hist.empty:
-            st.info("Nenhum check-list encontrado com os filtros aplicados.")
+            st.info("Nenhum check-list registrado para esta reserva ainda.")
         else:
-            st.dataframe(hist.sort_values(["Data", "Cliente"]), use_container_width=True, hide_index=True)
+            st.dataframe(hist.sort_values(["Tipo", "Brinquedo", "Item"]),
+                         use_container_width=True, hide_index=True)
 
-    # ---------- INDICADORES ----------
+    # ========================================
+    # ABA 2 - CADASTRAR PEÇAS
+    # ========================================
     with aba2:
-        if checklist.empty:
-            st.info("Nenhum dado disponível para estatísticas.")
-        else:
-            checklist["Data_mês"] = pd.to_datetime(checklist["Data"], errors="coerce").dt.to_period("M").astype(str)
-            resumo = (checklist.groupby(["Data_mês", "Tipo"])
-                      .size()
-                      .unstack(fill_value=0)
-                      .rename_axis(None, axis=1)
-                      .reset_index())
+        st.subheader("🧩 Cadastro de Peças por Brinquedo")
 
-            st.markdown("### 📈 Total de checklists por mês")
-            st.bar_chart(resumo.set_index("Data_mês"))
+        brinquedo_novo = st.selectbox("Brinquedo:", brinquedos_cadastrados["Nome"].unique())
+        nova_peca = st.text_input("Nome da peça:")
+        adicionar = st.button("➕ Adicionar peça")
+
+        if adicionar and nova_peca:
+            nova_linha = pd.DataFrame([[brinquedo_novo, nova_peca]], columns=["Brinquedo", "Item"])
+            pecas = pd.concat([pecas, nova_linha], ignore_index=True)
+            pecas.to_csv("pecas_brinquedos.csv", index=False, encoding="utf-8-sig")
+            st.success(f"✅ Peça '{nova_peca}' adicionada ao brinquedo '{brinquedo_novo}'!")
+            st.rerun()
+
+        # Card resumo
+        total_pecas = len(pecas)
+        total_brinquedos = pecas["Brinquedo"].nunique()
+
+        st.markdown(f"""
+            <div style="background-color:#f9f9f9;
+                        border-left:6px solid #7A5FFF;
+                        border-radius:10px;
+                        padding:12px 20px;
+                        margin-top:10px;
+                        box-shadow:2px 2px 8px rgba(0,0,0,0.1);">
+                <h4 style="margin:0;color:#7A5FFF;">
+                    🧩 {total_pecas} peças cadastradas para {total_brinquedos} brinquedos
+                </h4>
+            </div>
+        """, unsafe_allow_html=True)
+
+        # Exibição das peças
+        if not pecas.empty:
+            st.dataframe(pecas.sort_values(["Brinquedo", "Item"]),
+                         use_container_width=True, hide_index=True)
+        else:
+            st.info("Nenhuma peça cadastrada ainda.")
 
 
 # ==============================
@@ -2493,6 +2805,609 @@ def pagina_frota():
 
 
 
+# =========================
+# 📲 Módulo Envio WhatsApp
+# =========================
+
+def pagina_whatsapp():
+    import pandas as pd
+    from datetime import datetime, date
+    import streamlit.components.v1 as components
+    import base64
+
+    st.header("💬 Central WhatsApp e Suporte")
+
+    # =========================
+    # Abas principais
+    # =========================
+    aba1, aba2, aba3 = st.tabs(["🧰 Suporte Técnico", "📲 Envio WhatsApp", "📘 Portfólio Montessori"])
+
+    # =========================
+    # 🧰 ABA 1 - SUPORTE TÉCNICO
+    # =========================
+    with aba1:
+        st.subheader("📖 Informações e respostas rápidas")
+        st.info("""
+        Esta aba será usada para armazenar respostas e instruções rápidas para suporte aos clientes.
+
+        **Tatames:**
+        
+        - Tons Cinzas: 100 Tatames
+        - Tons Azuis Antigo: 20 Tatames
+        - Tons Azuis Novo: 65 Tatames
+        - Tons Beges: 20 Tatames
+        
+        **      Quantidade Tatames ideal para kit Montessori:**
+        
+        - Kit doçura: 5m² (20) Com base nos bege
+        - Kit doçura: 10m² (40) Com base nos em outros tatames
+        - Kit alegria: 11 a 16m² (45 a 65)
+        - Kit encanto: 18 a 25m² (70 a 100)
+        - Kit TimTim: 20 a 25m² (80 a 100) 
+        
+         **Base calculo frete:**
+        - Montessori - R$ 5,00 por KM
+        - Tradicional - R$ 3,00 Por KM
+        - Menor que 5KM, insento
+        
+         **Dados Técnico brinquedos:**
+        - Cama Elastica 2,44: Aguenta até 70kg, até 3 crianças por vez que não ultrapasse o peso.
+        - Cama Elastica 1,83: Aguenta até 60kg, até 2 crianças por vez que não ultrapasse o peso.
+        - Tombo Legal: Aguenta até 70kg, 1 crianças por vez, BiVolt, necessário tomada proxima.
+        - Mesa Air Game: Sem limite de idade, 120v, necessário tomada proxima.
+
+    
+
+        ✏️ *Você poderá editar esta seção diretamente no código para atualizar suas informações internas.*
+        """)
+
+    # =========================
+    # 📲 ABA 2 - ENVIO WHATSAPP (seu código original)
+    # =========================
+    with aba2:
+        usuario_logado = st.session_state.get("usuario", "")
+        if usuario_logado not in ["Bruno", "Maryanne"]:
+            st.warning("⚠️ Você não tem permissão para acessar esta página.")
+            return
+
+        # =========================
+        # Carregamento de dados
+        # =========================
+        reservas = carregar_dados(
+            "reservas.csv",
+            ["Cliente", "Brinquedos", "Data", "Horário Entrega", "Horário Retirada",
+             "Início Festa", "Fim Festa", "Valor Total", "Sinal", "Falta", "Frete", "Status"]
+        )
+        clientes = carregar_dados(
+            "clientes.csv",
+            ["Nome", "CEP"]
+        )
+
+        if reservas.empty:
+            st.info("Nenhuma reserva encontrada.")
+            return
+
+        reservas["Data"] = pd.to_datetime(reservas["Data"], errors="coerce")
+        reservas = reservas.dropna(subset=["Data"])
+
+        reservas = reservas.merge(
+            clientes, how="left", left_on="Cliente", right_on="Nome"
+        ).drop(columns=["Nome"], errors="ignore")
+        reservas["CEP"] = reservas["CEP"].fillna("")
+
+        hoje = pd.Timestamp.now().normalize()
+
+        # =========================
+        # Filtros principais
+        # =========================
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            mes_sel = st.selectbox(
+                "📅 Mês:",
+                options=[
+                    (1, "Janeiro"), (2, "Fevereiro"), (3, "Março"), (4, "Abril"),
+                    (5, "Maio"), (6, "Junho"), (7, "Julho"), (8, "Agosto"),
+                    (9, "Setembro"), (10, "Outubro"), (11, "Novembro"), (12, "Dezembro")
+                ],
+                index=hoje.month - 1,
+                format_func=lambda x: x[1]
+            )[0]
+        with col2:
+            ano_sel = st.number_input("📆 Ano:", min_value=2023, max_value=2100, value=hoje.year, step=1)
+        with col3:
+            filtro_periodo = st.radio(
+                "📍 Exibir:",
+                ["Todas as datas", "Somente futuras", "Hoje e futuras"],
+                horizontal=True
+            )
+
+        df = reservas[
+            (reservas["Data"].dt.month == mes_sel) &
+            (reservas["Data"].dt.year == ano_sel)
+        ].copy()
+
+        if filtro_periodo == "Somente futuras":
+            df = df[df["Data"] > hoje]
+        elif filtro_periodo == "Hoje e futuras":
+            df = df[df["Data"] >= hoje]
+
+        if df.empty:
+            st.warning("⚠️ Nenhuma reserva encontrada para o período selecionado.")
+            return
+
+        # =========================
+        # Cards Resumo do Mês
+        # =========================
+        total_reservas = len(df)
+        futuras = len(df[df["Data"] > hoje])
+        concluidas = len(df[df["Status"].str.lower() == "concluído"])
+
+        c1, c2, c3 = st.columns(3)
+        for col, (titulo, valor, cor) in zip(
+            [c1, c2, c3],
+            [
+                ("📅 Total de Reservas", total_reservas, "#7A5FFF"),
+                ("🚀 Futuras", futuras, "#2ECC71"),
+                ("✅ Concluídas", concluidas, "#3498DB"),
+            ]
+        ):
+            col.markdown(
+                f"""
+                <div style="background-color:#fff;border-left:6px solid {cor};
+                            border-radius:12px;padding:10px;text-align:center;
+                            box-shadow:2px 2px 10px rgba(0,0,0,0.1);">
+                    <div style="color:#555;">{titulo}</div>
+                    <div style="font-size:1.6em;font-weight:bold;">{valor}</div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+        st.divider()
+
+        # =========================
+        # Geração de mensagens
+        # =========================
+        df = df.sort_values("Data")
+        mensagens = []
+        for _, row in df.iterrows():
+            data_formatada = row["Data"].strftime("%d/%m")
+            cliente = row.get("Cliente", "")
+            brinquedos = row.get("Brinquedos", "")
+            cep = str(row.get("CEP", "")).replace(".0", "").strip()
+            inicio_festa = row.get("Início Festa", "")
+            fim_festa = row.get("Fim Festa", "")
+            entrega = row.get("Horário Entrega", "")
+            retirada = row.get("Horário Retirada", "")
+            valor_total = row.get("Valor Total", 0.0)
+            sinal = row.get("Sinal", 0.0)
+            falta = row.get("Falta", 0.0)
+            frete = row.get("Frete", 0.0)
+
+            msg = f"📍 {data_formatada} – {cliente}\n"
+            if cep:
+                msg += f"🗺️ CEP: {cep}\n"
+            if inicio_festa and fim_festa:
+                msg += f"⏰ Horário Festa: {inicio_festa} - {fim_festa}\n"
+            msg += f"🕘 Montagem: {entrega} | 🕘 Retirada: {retirada}\n"
+            msg += f"🎠 {brinquedos}\n"
+            if frete > 0:
+                msg += f"🚚 Frete: R$ {frete:,.2f}\n"
+            msg += f"💰 Total: R$ {valor_total:,.2f}\n"
+            msg += f"💳 Pagou: R$ {sinal:,.2f} | 💸 Falta: R$ {falta:,.2f}\n"
+            mensagens.append(msg.strip())
+
+        texto_final = "\n────────────\n".join(mensagens)
+
+        st.subheader(f"📆 Reservas de {ano_sel} – Mês {mes_sel:02d}")
+        st.text_area("Mensagens geradas:", texto_final, height=500, key="mensagens_whatsapp")
+
+        # =========================
+        # Botões de cópia
+        # =========================
+        copiar_js = f"""
+            <script>
+            function copiarTexto() {{
+                const texto = `{texto_final}`;
+                navigator.clipboard.writeText(texto).then(() => {{
+                    alert("✅ Texto copiado para a área de transferência!");
+                }});
+            }}
+            function copiarPorData() {{
+                let hoje = new Date().toLocaleDateString('pt-BR');
+                const linhas = `{texto_final}`.split("────────────");
+                const filtradas = linhas.filter(l => l.includes(hoje));
+                if (filtradas.length > 0) {{
+                    navigator.clipboard.writeText(filtradas.join("\\n\\n")).then(() => {{
+                        alert("📅 Texto do dia copiado!");
+                    }});
+                }} else {{
+                    alert("⚠️ Nenhuma reserva encontrada para hoje!");
+                }}
+            }}
+            </script>
+            <div style="display:flex;gap:10px;">
+                <button onclick="copiarTexto()" style="background-color:#7A5FFF;color:white;border:none;
+                        border-radius:8px;padding:10px 20px;font-weight:bold;cursor:pointer;">
+                    📋 Copiar tudo
+                </button>
+                <button onclick="copiarPorData()" style="background-color:#2ECC71;color:white;border:none;
+                        border-radius:8px;padding:10px 20px;font-weight:bold;cursor:pointer;">
+                    📅 Copiar só hoje
+                </button>
+            </div>
+        """
+        components.html(copiar_js, height=80)
+
+    # =========================
+    # 📘 ABA 3 - PORTFÓLIO MONTESSORI
+    # =========================
+    with aba3:
+        st.subheader("📘 Portfólio de Brinquedos Montessori")
+        pdf_path = "Portfólio brinquedos Montessori Timtim - Out 2025.pdf"
+
+        if os.path.exists(pdf_path):
+            with open(pdf_path, "rb") as f:
+                base64_pdf = base64.b64encode(f.read()).decode("utf-8")
+            pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="800px" type="application/pdf"></iframe>'
+            st.markdown(pdf_display, unsafe_allow_html=True)
+        else:
+            st.error("❌ Arquivo do portfólio não encontrado. Verifique se o PDF está na pasta do aplicativo.")
+
+
+
+
+from pathlib import Path
+import unicodedata, re
+from datetime import datetime
+
+def _slugify(s: str) -> str:
+    s = unicodedata.normalize("NFKD", str(s)).encode("ascii", "ignore").decode("ascii")
+    s = re.sub(r"[^\w\s-]", "", s).strip().lower()
+    return re.sub(r"[\s_-]+", "-", s) or "foto"
+
+def _fotos_dir() -> Path:
+    # garante a pasta ao lado do app.py
+    base = Path(__file__).parent if "__file__" in globals() else Path.cwd()
+    d = base / "fotos_funcionarios"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+def salvar_foto_imediato(foto_bytes: bytes, nome_hint: str, ext: str = ".jpg") -> str:
+    """
+    Salva imediatamente a foto em fotos_funcionarios e
+    retorna caminho RELATIVO em formato POSIX (string).
+    """
+    fotos_dir = _fotos_dir()
+    fname = f"{_slugify(nome_hint)}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{ext}"
+    destino = fotos_dir / fname
+    with open(destino, "wb") as f:
+        f.write(foto_bytes)
+    # retorna relativo ao app (portável)
+    rel = destino.relative_to(Path(__file__).parent if "__file__" in globals() else Path.cwd())
+    return rel.as_posix()
+
+
+def pagina_funcionarios():
+    import re
+    import pandas as pd
+    from datetime import datetime, date
+    from pathlib import Path
+    import streamlit as st
+
+    st.header("👥 Controle de Funcionários")
+
+    # ======================================
+    # 🗂️ Estrutura e carregamento de dados
+    # ======================================
+    arquivo = "funcionarios.csv"
+    colunas = [
+        "Nome", "CPF", "Cargo", "Categoria", "Telefone",
+        "Data Nascimento", "Data Admissao", "Status",
+        "Foto", "Observacao"
+    ]
+    df = carregar_dados(arquivo, colunas).fillna("")
+    df["Foto"] = df["Foto"].astype(str).replace(["nan", "None", "0"], "")
+
+    # ======================================
+    # 🔧 Estados iniciais
+    # ======================================
+    if "show_camera" not in st.session_state:
+        st.session_state.show_camera = False
+    if "ultima_foto_salva" not in st.session_state:
+        st.session_state.ultima_foto_salva = ""
+    if "confirmar_exclusao" not in st.session_state:
+        st.session_state.confirmar_exclusao = None
+
+    # ======================================
+    # 📊 Cards: totais, ativos, inativos, etc.
+    # ======================================
+    def _calc_idade(dt):
+        if pd.isna(dt):
+            return None
+        hoje = date.today()
+        anos = hoje.year - dt.year - ((hoje.month, hoje.day) < (dt.month, dt.day))
+        return max(0, anos)
+
+    def _meses_de_casa(dt):
+        if pd.isna(dt):
+            return None
+        hoje = date.today()
+        return (hoje.year - dt.year) * 12 + (hoje.month - dt.month) - (1 if hoje.day < dt.day else 0)
+
+    total_func = len(df)
+    ativos = (df["Status"].str.strip().str.lower() == "ativo").sum()
+    inativos = (df["Status"].str.strip().str.lower() == "inativo").sum()
+    com_foto = (df["Foto"].str.strip() != "").sum()
+
+    # idade média
+    idades = []
+    for v in pd.to_datetime(df["Data Nascimento"], errors="coerce"):
+        idade = _calc_idade(v) if pd.notna(v) else None
+        if idade is not None:
+            idades.append(idade)
+    idade_media = round(sum(idades) / len(idades), 1) if idades else 0.0
+
+    # tempo médio de empresa (em anos.meses)
+    meses_list = []
+    for v in pd.to_datetime(df["Data Admissao"], errors="coerce"):
+        m = _meses_de_casa(v) if pd.notna(v) else None
+        if m is not None and m >= 0:
+            meses_list.append(m)
+    if meses_list:
+        media_meses = int(round(sum(meses_list) / len(meses_list)))
+        anos_med = media_meses // 12
+        meses_med = media_meses % 12
+        tempo_medio_str = f"{anos_med}a {meses_med}m"
+    else:
+        tempo_medio_str = "0a 0m"
+
+    # 🎂 Contagem de aniversariantes do mês
+    mes_atual = date.today().month
+    aniversariantes_mes = 0
+    for v in pd.to_datetime(df["Data Nascimento"], errors="coerce"):
+        if pd.notna(v) and v.month == mes_atual:
+            aniversariantes_mes += 1
+
+    # Render dos cards
+    st.markdown("<br>", unsafe_allow_html=True)
+    c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
+    cards = [
+        ("👥 Total", total_func, "#7A5FFF"),
+        ("🟢 Ativos", ativos, "#2ECC71"),
+        ("🔴 Inativos", inativos, "#E74C3C"),
+        ("📸 Com foto", com_foto, "#3498DB"),
+        ("🎂 Idade média", f"{idade_media} anos", "#F39C12"),
+        ("⏱️ Tempo médio", tempo_medio_str, "#16A085"),
+        ("🎉 Aniversariantes", aniversariantes_mes, "#9B59B6"),
+    ]
+    for col, (label, value, color) in zip([c1, c2, c3, c4, c5, c6, c7], cards):
+        col.markdown(
+            f"""
+            <div style="background-color:#f9f9f9; border-left:6px solid {color};
+                        border-radius:12px; padding:14px; text-align:center;
+                        box-shadow:2px 2px 10px rgba(0,0,0,0.08);">
+                <div style="font-size:0.95em;color:#555;">{label}</div>
+                <div style="font-size:1.5em;font-weight:800;">{value}</div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    # ======================================
+    # 🔍 Busca
+    # ======================================
+    st.divider()
+    busca = st.text_input("🔎 Buscar funcionário pelo nome:")
+    df_view = df.copy()
+    if busca:
+        df_view = df_view[df_view["Nome"].str.contains(busca, case=False, na=False)]
+
+    st.subheader("➕ Cadastrar / Editar Funcionário")
+
+    editando = st.session_state.get("editando", None)
+    funcionario_editar = df_view.iloc[editando] if (editando is not None and editando < len(df_view)) else None
+
+    # ======================================
+    # 🧾 Formulário
+    # ======================================
+    with st.form("form_funcionario"):
+        nome = st.text_input("👤 Nome completo", value=funcionario_editar["Nome"] if funcionario_editar is not None else "")
+        cpf_input = st.text_input("🪪 CPF", value=funcionario_editar["CPF"] if funcionario_editar is not None else "")
+        cpf_clean = re.sub(r"\D", "", cpf_input)
+        cpf = f"{cpf_clean[:3]}.{cpf_clean[3:6]}.{cpf_clean[6:9]}-{cpf_clean[9:]}" if len(cpf_clean) == 11 else cpf_input
+
+        telefone_input = st.text_input("📞 Telefone / WhatsApp", value=funcionario_editar["Telefone"] if funcionario_editar is not None else "")
+        tel_clean = re.sub(r"\D", "", telefone_input)
+        telefone = f"({tel_clean[:2]}) {tel_clean[2:7]}-{tel_clean[7:]}" if len(tel_clean) == 11 else telefone_input
+
+        cargo = st.text_input("💼 Cargo / Função", value=funcionario_editar["Cargo"] if funcionario_editar is not None else "")
+        categoria = st.selectbox("🏷️ Categoria", ["Efetivo", "Temporário", "Parceiro"],
+                                 index=["Efetivo", "Temporário", "Parceiro"].index(funcionario_editar["Categoria"])
+                                 if funcionario_editar is not None else 0)
+
+        data_nasc = st.date_input("🎂 Data de nascimento",
+                                  value=pd.to_datetime(funcionario_editar["Data Nascimento"], errors="coerce").date()
+                                  if funcionario_editar is not None else date(1989, 1, 1),
+                                  min_value=date(1950, 1, 1), max_value=date.today())
+
+        data_adm = st.date_input("📅 Data de admissão",
+                                 value=pd.to_datetime(funcionario_editar["Data Admissao"], errors="coerce").date()
+                                 if funcionario_editar is not None else date.today(),
+                                 min_value=date(2000, 1, 1), max_value=date.today())
+
+        status = st.selectbox("⚙️ Status", ["Ativo", "Inativo"],
+                              index=["Ativo", "Inativo"].index(funcionario_editar["Status"])
+                              if funcionario_editar is not None else 0)
+
+        observacao = st.text_area("📝 Observações", value=funcionario_editar["Observacao"] if funcionario_editar is not None else "")
+
+        st.markdown("### 📸 Foto do funcionário")
+        foto_path = funcionario_editar["Foto"] if funcionario_editar is not None else ""
+
+        if foto_path:
+            p = Path(foto_path.replace("\\", "/"))
+            if not p.is_absolute():
+                p = Path.cwd() / p
+            if p.exists():
+                st.image(p.as_posix(), width=150, caption="📷 Foto atual")
+
+        uploaded_file = st.file_uploader("Enviar nova foto (.jpg ou .png)", type=["jpg", "jpeg", "png"], key="upload_foto")
+
+        salvar = st.form_submit_button("💾 Salvar Funcionário")
+
+        if salvar:
+            if uploaded_file is not None:
+                ext = "." + (uploaded_file.type.split("/")[-1] if uploaded_file.type else "jpg")
+                if ext.lower() not in [".jpg", ".jpeg", ".png"]:
+                    ext = ".jpg"
+                hint = nome or uploaded_file.name
+                foto_path = salvar_foto_imediato(uploaded_file.getvalue(), hint, ext=ext)
+            elif st.session_state.ultima_foto_salva:
+                foto_path = st.session_state.ultima_foto_salva
+
+            if not nome.strip():
+                st.error("⚠️ O nome é obrigatório.")
+            else:
+                novo = {
+                    "Nome": nome, "CPF": cpf, "Cargo": cargo, "Categoria": categoria,
+                    "Telefone": telefone, "Data Nascimento": data_nasc,
+                    "Data Admissao": data_adm, "Status": status,
+                    "Foto": foto_path, "Observacao": observacao
+                }
+
+                df_full = carregar_dados(arquivo, colunas).fillna("")
+                if funcionario_editar is not None and editando < len(df_full):
+                    df_full.loc[editando] = novo
+                    st.success("✏️ Funcionário atualizado com sucesso!")
+                    st.session_state.editando = None
+                else:
+                    df_full.loc[len(df_full)] = novo
+                    st.success("✅ Funcionário cadastrado com sucesso!")
+
+                salvar_dados(df_full, arquivo)
+                st.rerun()
+
+    # ======================================
+    # 📷 Câmera
+    # ======================================
+    st.divider()
+    st.subheader("📷 Capturar foto com a câmera")
+
+    col_a, col_b = st.columns([1, 1])
+    with col_a:
+        if st.button("📸 Abrir câmera"):
+            st.session_state.show_camera = True
+    with col_b:
+        if st.button("❌ Fechar câmera"):
+            st.session_state.show_camera = False
+
+    if st.session_state.show_camera:
+        foto_cam = st.camera_input("Tire a foto e clique em 'Take Photo' 👇", key="cam_func")
+        if foto_cam is not None:
+            hint = nome or "funcionario"
+            foto_path_cam = salvar_foto_imediato(foto_cam.getvalue(), hint, ext=".jpg")
+            st.session_state.ultima_foto_salva = foto_path_cam
+            st.image(foto_path_cam, width=150, caption="📸 Foto capturada e salva")
+            st.success(f"Foto salva em: {foto_path_cam}")
+
+    # ======================================
+    # 📋 Lista de Funcionários
+    # ======================================
+    st.divider()
+    st.subheader("📋 Funcionários cadastrados")
+
+    df_list = carregar_dados(arquivo, colunas).fillna("")
+    if df_list.empty:
+        st.info("Nenhum funcionário cadastrado.")
+        return
+
+    def tempo_casa_str(dt):
+        if pd.isna(dt):
+            return "?"
+        hoje = date.today()
+        anos = hoje.year - dt.year - ((hoje.month, hoje.day) < (dt.month, dt.day))
+        meses_total = (hoje.year - dt.year) * 12 + hoje.month - dt.month - (1 if hoje.day < dt.day else 0)
+        return f"{anos}a {meses_total % 12}m"
+
+    for i, row in df_list.iterrows():
+        with st.container():
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                foto_val = str(row["Foto"]).strip().replace("\\", "/")
+                if foto_val:
+                    p = Path(foto_val)
+                    if not p.is_absolute():
+                        p = Path.cwd() / p
+                    if p.exists():
+                        st.image(p.as_posix(), width=120)
+                    else:
+                        st.image("https://via.placeholder.com/120x120.png?text=Sem+Foto", width=120)
+                else:
+                    st.image("https://via.placeholder.com/120x120.png?text=Sem+Foto", width=120)
+
+            with col2:
+                dn = pd.to_datetime(row["Data Nascimento"], errors="coerce")
+                is_bday_month = (pd.notna(dn) and dn.month == mes_atual)
+
+                nome_display = f"**{row['Nome']}**"
+                if is_bday_month:
+                    nome_display += (
+                        " <span style='background-color:#EDE0FF; color:#7A5FFF; "
+                        "padding:3px 8px; border-radius:8px; font-size:0.8em; "
+                        "font-weight:600; margin-left:6px;'>🎉 Parabéns!</span>"
+                    )
+
+                st.markdown(nome_display, unsafe_allow_html=True)
+                st.caption(f"{row['Cargo']} • {row['Categoria']}")
+
+                status_icon = "🟢" if str(row["Status"]).strip().lower() == "ativo" else "🔴"
+                idade = (date.today().year - dn.year) if pd.notna(dn) else "?"
+                da = pd.to_datetime(row["Data Admissao"], errors="coerce")
+                tempo = tempo_casa_str(da) if pd.notna(da) else "?"
+
+                st.write(f"{status_icon} {row['Status']} • 🎂 {idade} anos • ⏱️ {tempo}")
+
+                if row["Telefone"]:
+                    num = re.sub(r"\D", "", str(row["Telefone"]))
+                    st.markdown(f"[💬 WhatsApp](https://wa.me/55{num})", unsafe_allow_html=True)
+
+                with st.expander("🔽 Ver mais detalhes"):
+                    st.write(f"**CPF:** {row['CPF']}")
+                    st.write(f"**Nascimento:** {row['Data Nascimento']}")
+                    st.write(f"**Admissão:** {row['Data Admissao']}")
+                    st.write(f"**Observações:** {row['Observacao']}")
+
+                col_ed, col_del = st.columns(2)
+                with col_ed:
+                    if st.button("✏️ Editar", key=f"edit_{i}"):
+                        st.session_state.editando = i
+                        st.rerun()
+
+                with col_del:
+                    if st.session_state.get("confirmar_exclusao") == i:
+                        st.warning(f"⚠️ Confirmar exclusão de {row['Nome']}?")
+                        col_c, col_d = st.columns(2)
+                        with col_c:
+                            if st.button("✅ Sim, excluir", key=f"confirma_{i}"):
+                                df2 = carregar_dados(arquivo, colunas).fillna("")
+                                if i in df2.index:
+                                    df2.drop(i, inplace=True)
+                                    df2.reset_index(drop=True, inplace=True)
+                                    salvar_dados(df2, arquivo)
+                                st.success(f"{row['Nome']} foi removido com sucesso.")
+                                st.session_state.confirmar_exclusao = None
+                                st.rerun()
+                        with col_d:
+                            if st.button("❌ Cancelar", key=f"cancela_{i}"):
+                                st.session_state.confirmar_exclusao = None
+                                st.rerun()
+                    else:
+                        if st.button("🗑️ Excluir", key=f"del_{i}"):
+                            st.session_state.confirmar_exclusao = i
+                            st.rerun()
+
+
 # ========================================
 # PROGRAMA PRINCIPAL
 # ========================================
@@ -2562,27 +3477,71 @@ else:
         </style>
     """, unsafe_allow_html=True)
 
+
     # 🔹 MENU DE OPÇÕES
     menu_opcoes = {
-        "Indicadores": ("📈 Indicadores", "indicadores"),
-        "Brinquedos": ("🎠 Brinquedos", "brinquedos"),
-        "Clientes": ("👨‍👩‍👧 Clientes", "clientes"),
-        "Reservas": ("📅 Reservas", "reservas"),
-        "Agenda": ("📅 Agenda", "agenda"),
-        "Custos": ("💸 Custos", "custos"), 
-        "Estoque": ("📦 Estoque", "estoque"),    
-        "Check-list": ("📦 Check-list", "check-list"), 
-        "Frota": ("🚗 Frota", "frota"),
-        "Sair": ("🚪 Sair", "sair")
+            "Indicadores": ("📈 Indicadores", "indicadores"),
+            "Brinquedos": ("🎠 Brinquedos", "brinquedos"),
+            "Clientes": ("👨‍👩‍👧 Clientes", "clientes"),
+            "Reservas": ("📅 Reservas", "reservas"),
+            "Agenda": ("🕓 Agenda", "agenda"),
+            "Custos": ("💸 Custos", "custos"), 
+            "Estoque": ("📦 Estoque", "estoque"),    
+            "Check-list": ("✅ Check-list", "check-list"), 
+            "Frota": ("🚗 Frota", "frota"),
+            "Funcionários": ("👷 Funcionários", "funcionarios"),
+            "Envio WhatsApp": ("📲 Suporte", "envio_whatsapp"),
+            "Sair": ("🚪 Sair", "sair")
     }
 
     st.sidebar.markdown("### 📋 Menu Principal")
-
+    
+    
     menu = st.sidebar.radio(
         "",
         options=list(menu_opcoes.keys()),
         format_func=lambda x: menu_opcoes[x][0],
         key="menu_principal"
+    )
+    
+    
+   # 💜 Rodapé fixo - BRN Solutions (ajustado)
+    from datetime import datetime
+    ano = datetime.now().year
+
+    st.sidebar.markdown(
+        f"""
+        <style>
+            /* Garante que a sidebar ocupe toda a altura e permita o rodapé no final */
+            [data-testid="stSidebar"] > div:first-child {{
+                display: flex;
+                flex-direction: column;
+                height: 100%;
+            }}
+            /* Container do rodapé */
+            .brn-footer {{
+                margin-top: auto;
+                text-align: center;
+                font-size: 0.8em;
+                color: #555;
+                opacity: 0.8;
+                line-height: 1.4;
+                border-top: 1px solid rgba(0,0,0,0.1);
+                padding-top: 8px;
+                padding-bottom: 6px;
+                
+            }}
+            .brn-footer strong {{
+                color: #7A5FFF;
+            }}
+        </style>
+
+        <div class="brn-footer">
+            <strong>BRN Solutions</strong><br>
+            © {ano} Todos os direitos reservados
+        </div>
+        """,
+        unsafe_allow_html=True
     )
 
     # 🧭 NAVEGAÇÃO ENTRE PÁGINAS
@@ -2604,6 +3563,12 @@ else:
         pagina_checklist()
     elif menu == "Frota":
         pagina_frota()
+    elif menu == "Funcionários":
+        pagina_funcionarios()
+    elif menu == "Envio WhatsApp":
+        pagina_whatsapp()      
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
+
