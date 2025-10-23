@@ -101,38 +101,6 @@ def login():
 # ========================================
 
 
-def carregar_dados(caminho, colunas):
-    """Lê CSV. Se não existir ou estiver inválido, cria vazio com cabeçalho."""
-    caminho_abs = _caminho_csv(caminho)
-    if os.path.exists(caminho_abs):
-        try:
-            df = pd.read_csv(caminho_abs, encoding="utf-8-sig")
-            # Se colunas não batem, recria vazio com cabeçalho correto
-            if any(c not in df.columns for c in colunas):
-                df = pd.DataFrame(columns=colunas)
-        except Exception:
-            df = pd.DataFrame(columns=colunas)
-    else:
-        df = pd.DataFrame(columns=colunas)
-        df.to_csv(caminho_abs, index=False, encoding="utf-8-sig")  # cria arquivo com cabeçalho
-
-    # garante todas as colunas e ordem
-    for c in colunas:
-        if c not in df.columns:
-            df[c] = ""
-    df = df.reindex(columns=colunas).reset_index(drop=True)
-    return df
-
-def salvar_dados(df, caminho):
-    """Salva CSV (UTF-8 BOM). Lança erro na UI se falhar."""
-    caminho_abs = _caminho_csv(caminho)
-    try:
-        df.to_csv(caminho_abs, index=False, encoding="utf-8-sig")
-    except Exception as e:
-        st.error(f"❌ Erro ao salvar '{caminho_abs}': {e}")
-        raise
-
-
 def obter_coordenadas(cep):
     """Converte CEP brasileiro em coordenadas (lon, lat)."""
     url = f"https://nominatim.openstreetmap.org/search?postalcode={cep}&country=Brazil&format=json"
@@ -3572,5 +3540,6 @@ else:
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
