@@ -11,7 +11,7 @@ requests==2.32.3           # Requisições HTTP (ex: ViaCEP)
 # 📂 Leitura / Escrita de Arquivos
 # ========================================
 openpyxl==3.1.5            # Planilhas Excel
-pyarrow==17.0.0            # Compatível com pandas 2.2 (evita erro de build)
+pyarrow==15.0.2            # Compatível com pandas 2.2 (evita erro de build)
 
 # ========================================
 # 🧾 Geração de PDFs e Imagens
@@ -29,3 +29,4 @@ pytz==2024.1
 # 🛠️ Compatibilidade Adicional
 # ========================================
 protobuf<5.0.0             # Evita conflitos internos com Streamlit
+
