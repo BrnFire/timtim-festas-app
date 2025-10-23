@@ -54,7 +54,7 @@ def salvar_dados(df, nome_tabela):
 
             # Deleta registros antigos (para evitar duplicar)
             try:
-                table_delete(nome_tabela)
+                table_delete(nome_tabela, {})
             except Exception as e:
                 print(f"[AVISO] Não foi possível limpar '{nome_tabela}': {e}")
 
@@ -89,3 +89,4 @@ def atualizar_registro(nome_tabela, filtro, novos_valores):
             print("[AVISO] Atualização individual só é suportada no modo online.")
     except Exception as e:
         print(f"[ERRO] Falha ao atualizar '{nome_tabela}': {e}")
+
