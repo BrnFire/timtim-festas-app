@@ -1,23 +1,38 @@
-
 # ========================================
 # Correção para PyArrow no Streamlit Cloud
 # ========================================
-import os, subprocess, sys
+import os
+import sys
+import subprocess
 
 try:
     import pyarrow
 except ImportError:
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "pyarrow==15.0.2", "--only-binary=:all:"])
+    subprocess.check_call([
+        sys.executable,
+        "-m", "pip",
+        "install",
+        "pyarrow==15.0.2",
+        "--only-binary=:all:"
+    ])
     import pyarrow
 
+
+# ========================================
+# IMPORTAÇÕES PADRÃO DO APP
+# ========================================
 import streamlit as st
 import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
 import requests
-import os
-import json
-import time 
 from datetime import datetime
-from dateutil import parser
+import pytz
+import openpyxl
+from PIL import Image
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.units import cm
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -3582,6 +3597,7 @@ else:
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
 
