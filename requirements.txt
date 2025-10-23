@@ -1,19 +1,31 @@
-# Núcleo do app
-streamlit==1.50.0
-pandas==2.2.3
-numpy==2.1.3
-matplotlib==3.9.2
-requests==2.32.3
+# ========================================
+# 🧠 Núcleo do App
+# ========================================
+streamlit==1.50.0          # Interface principal do app
+pandas==2.2.3              # Manipulação de dados
+numpy==2.1.3               # Cálculos numéricos
+matplotlib==3.9.2          # Gráficos e visualizações
+requests==2.32.3           # Requisições HTTP (ex: ViaCEP)
 
-# Leitura/escrita de arquivos
-openpyxl==3.1.5
-pyarrow==17.0.0
+# ========================================
+# 📂 Leitura / Escrita de Arquivos
+# ========================================
+openpyxl==3.1.5            # Planilhas Excel
+pyarrow==17.0.0            # Compatível com pandas 2.2 (evita erro de build)
 
-# Geração de PDFs e imagens
-pillow==10.4.0
-reportlab==4.2.2
+# ========================================
+# 🧾 Geração de PDFs e Imagens
+# ========================================
+pillow==10.4.0             # Manipulação de imagens (logo, fotos)
+reportlab==4.2.2           # Geração de PDFs
 
-# Manipulação de datas
+# ========================================
+# ⏰ Manipulação de Datas e Fuso Horário
+# ========================================
 python-dateutil==2.9.0.post0
 pytz==2024.1
 
+# ========================================
+# 🛠️ Compatibilidade Adicional
+# ========================================
+protobuf<5.0.0             # Evita conflitos internos com Streamlit
