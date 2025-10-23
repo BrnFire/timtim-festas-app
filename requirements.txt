@@ -3,7 +3,7 @@
 # ========================================
 streamlit==1.50.0
 pandas==2.2.3
-numpy==1.26.4           # 🔧 compatível com PyArrow 15 e pandas 2.2
+numpy==1.26.4
 matplotlib==3.9.2
 requests==2.32.3
 
@@ -11,7 +11,7 @@ requests==2.32.3
 # 📂 Leitura / Escrita de Arquivos
 # ========================================
 openpyxl==3.1.5
-pyarrow==15.0.2         # 🔧 roda sem compilar no Linux do Streamlit Cloud
+# pyarrow REMOVIDO - será instalado dinamicamente
 
 # ========================================
 # 🧾 Geração de PDFs e Imagens
