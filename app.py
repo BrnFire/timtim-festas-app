@@ -1,3 +1,15 @@
+
+# ========================================
+# Correção para PyArrow no Streamlit Cloud
+# ========================================
+import os, subprocess, sys
+
+try:
+    import pyarrow
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "pyarrow==15.0.2", "--only-binary=:all:"])
+    import pyarrow
+
 import streamlit as st
 import pandas as pd
 import requests
@@ -3570,5 +3582,6 @@ else:
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
