@@ -48,3 +48,45 @@ def carregar_dados(nome_arquivo, colunas):
     except Exception as e:
         print(f"Erro ao carregar dados de '{nome_arquivo}': {e}")
         return pd.DataFrame(columns=colunas)
+
+# ======================================================
+# Função genérica para salvar dados (Supabase + Local)
+# ======================================================
+def salvar_dados(df, nome_arquivo):
+    """
+    Salva os dados no Supabase e também mantém um backup local.
+    O nome_arquivo é algo como 'reservas.csv' ou 'clientes.csv'.
+    """
+    import pandas as pd
+    import os
+
+    nome_tabela = os.path.splitext(os.path.basename(nome_arquivo))[0]
+    caminho_abs = os.path.join(os.getcwd(), nome_arquivo)
+
+    # -------------------------------
+    # 🟣 1. Tenta salvar no Supabase
+    # -------------------------------
+    try:
+        print(f"Tentando salvar '{nome_tabela}' no Supabase...")
+
+        # Antes de sobrescrever, limpa a tabela
+        supabase.table(nome_tabela).delete().neq("id", 0).execute()
+
+        # Insere novamente todos os registros
+        registros = df.to_dict(orient="records")
+        if registros:
+            supabase.table(nome_tabela).insert(registros).execute()
+
+        print(f"✅ Dados salvos na tabela '{nome_tabela}' do Supabase.")
+    except Exception as e:
+        print(f"⚠️ Erro ao salvar no Supabase: {e}")
+
+    # -------------------------------
+    # 💾 2. Backup local (CSV)
+    # -------------------------------
+    try:
+        df.to_csv(caminho_abs, index=False, encoding="utf-8-sig")
+        print(f"📁 Backup local atualizado: {nome_arquivo}")
+    except Exception as e:
+        print(f"⚠️ Erro ao salvar backup local '{nome_arquivo}': {e}")
+
