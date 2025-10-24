@@ -1,92 +1,50 @@
-import pandas as pd
 import os
-from supabase_rest import (
-    table_select, table_insert, table_update, table_delete
-)
+import pandas as pd
+from supabase import create_client
+from supabase_rest import table_select
 
-# ==========================================================
-# 🔧 CONFIGURAÇÃO DE MODO
-# ==========================================================
-# Use MODO_APP="online" para Supabase
-# ou MODO_APP="local" para usar os CSV
-MODO = os.getenv("MODO_APP", "online").lower()
+# ----------------------------------------
+# CONFIGURAÇÃO SUPABASE
+# ----------------------------------------
+SUPABASE_URL = "https://hmrqsjdlixeazdfhrqqh.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhtcnFzamRsaXhlYXpkZmhycXFoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjEyMjE3MDUsImV4cCI6MjA3Njc5NzcwNX0.rM9fob3HIEl2YoL7lB7Tj7vUb21B9EzR1zLSR7VLwTM"
+
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
-# ==========================================================
-# 📥 FUNÇÃO: CARREGAR DADOS
-# ==========================================================
-def carregar_dados(nome_tabela, colunas):
+# ======================================================
+# Função genérica para carregar dados (Supabase + Local)
+# ======================================================
+def carregar_dados(nome_arquivo, colunas):
     """
-    Carrega dados do Supabase (modo online)
-    ou do CSV local (modo local).
+    Carrega dados de uma tabela Supabase com fallback local em CSV.
+    O nome_arquivo é algo como 'reservas.csv' ou 'clientes.csv'.
     """
+    nome_tabela = os.path.splitext(os.path.basename(nome_arquivo))[0]
+    caminho_abs = os.path.join(os.getcwd(), nome_arquivo)
+
     try:
-        if MODO == "online":
-            dados = table_select(nome_tabela)
-            df = pd.DataFrame(dados)
+        # 🔹 Primeiro tenta buscar do Supabase
+        print(f"Tentando carregar '{nome_tabela}' do Supabase...")
+        df = table_select(nome_tabela)
+        if df is not None and not df.empty:
+            print(f"✅ Dados carregados de {nome_tabela} (Supabase)")
+            return df
         else:
-            df = pd.read_csv(nome_tabela, encoding="utf-8-sig")
-
+            print(f"⚠️ Tabela '{nome_tabela}' vazia no Supabase.")
     except Exception as e:
-        print(f"[ERRO] Falha ao carregar '{nome_tabela}': {e}")
-        df = pd.DataFrame(columns=colunas)
+        print(f"Erro ao conectar ao Supabase: {e}")
 
-    # Garante que todas as colunas existam
-    for c in colunas:
-        if c not in df.columns:
-            df[c] = ""
-
-    df = df.reindex(columns=colunas).reset_index(drop=True)
-    return df
-
-
-# ==========================================================
-# 💾 FUNÇÃO: SALVAR DADOS
-# ==========================================================
-def salvar_dados(df, nome_tabela):
-    """
-    Salva dados no Supabase (modo online)
-    ou em CSV local (modo local).
-    """
+    # 🔹 Se falhar, tenta carregar do CSV local
     try:
-        if MODO == "online":
-            registros = df.to_dict(orient="records")
-
-            # Deleta registros antigos (para evitar duplicar)
-            try:
-                table_delete(nome_tabela, {})
-            except Exception as e:
-                print(f"[AVISO] Não foi possível limpar '{nome_tabela}': {e}")
-
-            if registros:
-                table_insert(nome_tabela, registros)
-                print(f"[OK] {len(registros)} registros enviados para '{nome_tabela}'")
-            else:
-                print(f"[INFO] Nenhum registro para salvar em '{nome_tabela}'")
-
+        if os.path.exists(caminho_abs):
+            df = pd.read_csv(caminho_abs)
+            print(f"📁 Dados carregados de '{nome_arquivo}' (local).")
         else:
-            df.to_csv(nome_tabela, index=False, encoding="utf-8-sig")
-            print(f"[OK] Dados salvos localmente em '{nome_tabela}'")
-
+            df = pd.DataFrame(columns=colunas)
+            df.to_csv(caminho_abs, index=False, encoding="utf-8-sig")
+            print(f"🆕 Arquivo '{nome_arquivo}' criado localmente.")
+        return df
     except Exception as e:
-        print(f"[ERRO] Falha ao salvar '{nome_tabela}': {e}")
-
-
-# ==========================================================
-# ✏️ FUNÇÃO OPCIONAL: ATUALIZAR REGISTRO ESPECÍFICO
-# ==========================================================
-def atualizar_registro(nome_tabela, filtro, novos_valores):
-    """
-    Atualiza registros específicos no Supabase.
-    Exemplo:
-        atualizar_registro("clientes", {"id": 3}, {"telefone": "(11) 98888-7777"})
-    """
-    try:
-        if MODO == "online":
-            table_update(nome_tabela, where=filtro, values=novos_valores)
-            print(f"[OK] Registro atualizado em '{nome_tabela}'")
-        else:
-            print("[AVISO] Atualização individual só é suportada no modo online.")
-    except Exception as e:
-        print(f"[ERRO] Falha ao atualizar '{nome_tabela}': {e}")
-
+        print(f"Erro ao carregar dados de '{nome_arquivo}': {e}")
+        return pd.DataFrame(columns=colunas)
