@@ -143,6 +143,8 @@ def salvar_dados(arg1, arg2):
 
     # converte NaN → None (permitido no Supabase)
     df = df.where(pd.notnull(df), None)
+    if "id" in df.columns:
+        df["id"] = df["id"].astype("Int64")  # Cast seguro para inteiro
 
     # DataFrame → lista de dicionários
     registros = df.to_dict(orient="records")
