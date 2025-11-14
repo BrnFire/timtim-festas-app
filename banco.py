@@ -2,10 +2,8 @@
 from __future__ import annotations
 
 import os
-import math
-import time
 import logging
-from typing import List, Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 import pandas as pd
 import re
@@ -14,7 +12,6 @@ import requests
 try:
     import streamlit as st
 except Exception:
-    # fallback leve para rodar fora do Streamlit (ex.: testes locais)
     class _Dummy:
         def __getattr__(self, name):
             def _(*args, **kwargs):
@@ -22,36 +19,22 @@ except Exception:
             return _
     st = _Dummy()  # type: ignore
 
-
-# === Corrige SSL local (rede corporativa) ===
-try:
-    import truststore
-    truststore.inject_into_ssl()
-except Exception:
-    pass
-# ============================================
-
-
-
 from supabase import create_client, Client
 
 SUPABASE_URL_DEFAULT = "https://hmrqsjdlixeazdfhrqqh.supabase.co"
 SUPABASE_KEY_DEFAULT = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhtcnFzamRsaXhlYXpkZmhycXFoIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2MTIyMTcwNSwiZXhwIjoyMDc2Nzk3NzA1fQ.o4M5Ku9Glbg8gCMTFSNCDkgKedn4-ZJWKzeY7IAEKXA"
 
-_SB: Client | None = None
-
+# ===================================================
+# CLIENTE SUPABASE (sem verify, sem options)
+# ===================================================
+_SB: Optional[Client] = None
 
 def _get_supabase_client() -> Client:
-    """
-    Cria o client do Supabase.
-    1º tenta pegar de st.secrets
-    2º tenta variáveis de ambiente
-    3º usa os defaults acima.
-    """
+    """Cria o client do Supabase. Usa st.secrets, depois env vars, depois defaults."""
     url = None
     key = None
 
-    # 1) st.secrets (quando estiver no Streamlit Cloud)
+    # 1) st.secrets
     try:
         if hasattr(st, "secrets") and "supabase" in st.secrets:
             url = st.secrets["supabase"].get("url")
@@ -59,22 +42,27 @@ def _get_supabase_client() -> Client:
     except Exception:
         pass
 
-    # 2) variáveis de ambiente (para rodar local com segurança)
+    # 2) Variáveis de ambiente
     if not url:
-        url = os.getenv("SUPABASE_URL", SUPABASE_URL_DEFAULT)
+        url = os.getenv("SUPABASE_URL")
     if not key:
-        key = os.getenv("SUPABASE_KEY", SUPABASE_KEY_DEFAULT)
+        key = os.getenv("SUPABASE_KEY")
 
-    # 3) cria o client — 🔴 sem verify / options aqui
+    # 3) Fallback
+    if not url:
+        url = SUPABASE_URL_DEFAULT
+    if not key:
+        key = SUPABASE_KEY_DEFAULT
+
+    # ⚠️ IMPORTANTE: NADA DE verify / options aqui
     return create_client(url, key)
 
-
 def sb() -> Client:
-    """Retorna sempre o mesmo client (cache em memória)."""
     global _SB
     if _SB is None:
         _SB = _get_supabase_client()
     return _SB
+
 
 
 
