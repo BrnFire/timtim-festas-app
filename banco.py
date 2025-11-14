@@ -102,17 +102,20 @@ def salvar_dados(arg1, arg2):
     """
     Salva um DataFrame no Supabase.
 
-    Aceita as duas formas (pra compatibilidade com o seu app):
+    Aceita:
       - salvar_dados(df, "tabela")
       - salvar_dados("tabela", df)
-    A estratégia aqui é simples e robusta:
-      1) Normaliza datas e NaN
-      2) DELETE ALL na tabela
-      3) INSERT em blocos
+
+    Diferença da versão antiga:
+      ❌ NÃO APAGA mais a tabela inteira.
+      ✔ Faz UPSERT seguro linha a linha.
+      ✔ Converte datas corretamente.
+      ✔ Remove NaT/NaN (gera JSON válido).
     """
+
     from datetime import date, datetime
 
-    # Detecta o que é df e o que é nome da tabela
+    # Detecta argumentos
     if isinstance(arg1, str):
         nome_tabela = arg1
         df = arg2
@@ -126,8 +129,9 @@ def salvar_dados(arg1, arg2):
 
     tabela = _tabela_from_nome_arquivo(nome_tabela)
 
-    # 1) Normaliza datas/NaN
+    # --- 1) NORMALIZAÇÃO DO DF ---
     df = df.copy()
+
     for col in df.columns:
         if pd.api.types.is_datetime64_any_dtype(df[col]):
             df[col] = df[col].dt.strftime("%Y-%m-%d")
@@ -137,32 +141,24 @@ def salvar_dados(arg1, arg2):
                 if isinstance(x, (date, datetime))
                 else x
             )
+
+    # Remove NaN/NaT → None (JSON válido)
     df = df.where(pd.notnull(df), None)
 
     registros = df.to_dict(orient="records")
 
     try:
-        # 2) Tenta apagar tudo antes (sem filtro = tabela inteira)
-        try:
-            table_delete(tabela, {})  # se a API bloquear, apenas não limpa
-        except Exception as e:
-            logging.warning(
-                "Não foi possível limpar a tabela '%s' antes de inserir: %s",
-                tabela,
-                e,
-            )
+        # --- 2) UPSERT seguro (sem apagar tudo) ---
+        for chunk in _chunked(registros, 500):
+            table_upsert(tabela, chunk)
 
-        # 3) Insere em blocos
-        if registros:
-            for chunk in _chunked(registros, 500):
-                table_insert(tabela, chunk)
-
-        print(f"✅ Tabela '{tabela}' gravada com {len(registros)} linha(s).")
+        print(f"✅ Tabela '{tabela}' atualizada com {len(registros)} linha(s).")
 
     except Exception as e:
         logging.exception("Erro em salvar_dados(%s)", tabela)
         st.error(f"❌ Erro ao salvar dados na tabela '{tabela}': {e}")
         raise
+
 
 
 # ===================================================
