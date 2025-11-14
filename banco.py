@@ -170,6 +170,16 @@ def salvar_dados(arg1, arg2):
     # ============================
     try:
         for chunk in _chunked(registros, 500):
+            print("=========== DEBUG ==========")
+for idx, reg in enumerate(registros):
+    try:
+        json.dumps(reg)   # tenta converter
+    except Exception as e:
+        print(f"❌ ERRO NA LINHA {idx}: {reg}")
+        print(f"Motivo: {e}")
+        raise
+print("=========== FIM DEBUG ==========")
+
             table_upsert(tabela, chunk)
 
         print(f"✅ Tabela '{tabela}' atualizada com {len(registros)} linha(s).")
