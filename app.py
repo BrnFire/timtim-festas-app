@@ -241,14 +241,33 @@ def pagina_relatorios():
     # =========================
     # 📅 Agregações mensais
     # =========================
+    # Garante que as colunas "data" sejam realmente datetimes
+    for df_tmp in [reservas, custos]:
+        if "data" in df_tmp.columns:
+            df_tmp["data"] = pd.to_datetime(df_tmp["data"], errors="coerce")
+
+    # Remove linhas sem data válida
+    reservas = reservas.dropna(subset=["data"])
+    custos = custos.dropna(subset=["data"])
+
+    # Se não tiver nenhum dado válido, evita quebrar a página
+    if reservas.empty and custos.empty:
+        st.warning("Ainda não há dados suficientes para montar os indicadores.")
+        return
+
     reservas["anomes"] = reservas["data"].dt.to_period("M").astype(str)
     custos["anomes"] = custos["data"].dt.to_period("M").astype(str)
 
     reservas["bruto"] = reservas["valor_total"].clip(lower=0)
     bruto_mensal = reservas.groupby("anomes", as_index=False)["bruto"].sum()
-    custo_mensal = custos.groupby("anomes", as_index=False)["valor"].sum().rename(columns={"valor": "custo"})
+    custo_mensal = (
+        custos.groupby("anomes", as_index=False)["valor"]
+        .sum()
+        .rename(columns={"valor": "custo"})
+    )
     reservas["qtd_reservas"] = 1
     reservas_mensal = reservas.groupby("anomes", as_index=False)["qtd_reservas"].sum()
+
 
     df_fin_mensal = pd.merge(bruto_mensal, custo_mensal, on="anomes", how="outer").fillna(0)
     df_fin_mensal["liquido"] = (df_fin_mensal["bruto"] - df_fin_mensal["custo"]).clip(lower=0)
@@ -3358,5 +3377,6 @@ else:
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
