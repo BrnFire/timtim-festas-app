@@ -196,10 +196,12 @@ def pagina_relatorios():
     # 📦 Carregamento de dados
     # =========================
     reservas = carregar_dados("reservas", [
-        "cliente", "brinquedos", "data",
-        "horario_entrega", "horario_retirada",
-        "valor_total", "valor_extra", "frete", "desconto",
-        "sinal", "falta", "observacao", "status", "pagamentos"
+    "id",  # ⬅️ IMPORTANTE
+    "cliente", "brinquedos", "data",
+    "horario_entrega", "horario_retirada",
+    "inicio_festa", "fim_festa",
+    "valor_total", "valor_extra", "frete", "desconto",
+    "sinal", "falta", "observacao", "status", "pagamentos"
     ])
     custos = carregar_dados("custos", ["data", "descricao", "valor"])
     brinquedos_df = carregar_dados("brinquedos", ["nome", "valor", "categoria"])
@@ -3382,6 +3384,7 @@ else:
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
 
