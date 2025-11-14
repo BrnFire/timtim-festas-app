@@ -101,13 +101,22 @@ def carregar_dados(nome_arquivo_ou_tabela: str, colunas: List[str]) -> pd.DataFr
 
 def salvar_dados(arg1, arg2):
     """
-    Salva um DataFrame no Supabase, convertendo tudo para JSON válido.
-    Compatível com sua tabela atual.
+    Salva um DataFrame no Supabase.
+
+    Aceita as duas formas (pra compatibilidade com o seu app):
+      - salvar_dados(df, "tabela")
+      - salvar_dados("tabela", df)
+
+    A estratégia aqui é:
+      1) Normaliza datas e NaN
+      2) Valida linha a linha com debug JSON
+      3) DELETE ALL na tabela
+      4) INSERT em blocos
     """
 
     from datetime import date, datetime
 
-    # Detecta os argumentos (mesma compatibilidade antiga)
+    # Detecta o que é df e o que é nome da tabela
     if isinstance(arg1, str):
         nome_tabela = arg1
         df = arg2
@@ -121,15 +130,12 @@ def salvar_dados(arg1, arg2):
 
     tabela = _tabela_from_nome_arquivo(nome_tabela)
 
+    # 1) Normaliza datas/NaN
     df = df.copy()
-
-    # ============================
-    # 1) Normalizar DATAS (colunas text no Supabase!)
-    # ============================
     for col in df.columns:
+        # datas
         if pd.api.types.is_datetime64_any_dtype(df[col]):
             df[col] = df[col].dt.strftime("%Y-%m-%d")
-
         elif df[col].dtype == "object":
             df[col] = df[col].apply(
                 lambda x: x.strftime("%Y-%m-%d")
@@ -137,48 +143,45 @@ def salvar_dados(arg1, arg2):
                 else x
             )
 
-    # ============================
-    # 2) Normalizar NÚMEROS (float8 no Supabase!)
-    # ============================
-    numeric_cols = [
-        "valor_total", "valor_extra", "frete",
-        "desconto", "sinal", "falta"
-    ]
+    df = df.where(pd.notnull(df), None)  # NaN -> None
 
-    for col in numeric_cols:
-        if col in df.columns:
-            df[col] = df[col].replace(",", ".", regex=True)
-            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+    registros = df.to_dict(orient="records")
 
-    # ============================
-    # 3) Campos que são LISTA/OBJETO → converter para string válida
-    # ============================
-    if "pagamentos" in df.columns:
-        df["pagamentos"] = df["pagamentos"].apply(
-            lambda x: str(x) if x not in (None, "", [], {}) else ""
-        )
+    # 2) DEBUG: valida cada registro JSON
+    print("\n=========== DEBUG RESERVAS ==========")
+    for idx, reg in enumerate(registros):
+        try:
+            json.dumps(reg)
+        except Exception as e:
+            print(f"\n❌ ERRO NA LINHA {idx}: {reg}")
+            print(f"Motivo: {e}\n")
+            st.error(f"❌ Registro inválido na linha {idx}: {e}")
+            raise
+    print("=========== FIM DEBUG ==========\n")
 
-    # ============================
-    # 4) Remover NaN/NaT → None
-    # ============================
-    df = df.where(pd.notnull(df), None)
-
-    registros = df.to_dict("records")
-
-    # ============================
-    # 5) Enviar via UPSERT em blocos
-    # ============================
     try:
-        for chunk in _chunked(registros, 500):
-            
+        # 3) DELETE ALL
+        try:
+            table_delete(tabela, {})
+        except Exception as e:
+            logging.warning(
+                "Não foi possível limpar a tabela '%s' antes de inserir: %s",
+                tabela,
+                e,
+            )
 
-            table_upsert(tabela, chunk)
+        # 4) Insere em blocos
+        if registros:
+            for chunk in _chunked(registros, 500):
+                table_upsert(tabela, chunk)
 
-        print(f"✅ Tabela '{tabela}' atualizada com {len(registros)} linha(s).")
+        print(f"✅ Tabela '{tabela}' gravada com {len(registros)} linha(s).")
 
     except Exception as e:
+        logging.exception("Erro em salvar_dados(%s)", tabela)
         st.error(f"❌ Erro ao salvar dados na tabela '{tabela}': {e}")
         raise
+
 
 
 
