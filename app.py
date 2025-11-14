@@ -1167,18 +1167,34 @@ def pagina_reservas():
                     st.session_state.editando = int(i)
                     st.rerun()
 
-                st.markdown("---")
-                st.markdown("**🗑️ Excluir reserva**")
-                confirmar = st.checkbox(
-                    f"Confirmar exclusão da reserva de {row.get('cliente','')}",
-                    key=f"chk_del_{tipo}_{i}"
-                )
-                if st.button("🗑️ Excluir DEFINITIVAMENTE", key=f"btn_del_{tipo}_{i}") and confirmar:
-                    reservas.drop(index=i, inplace=True)
-                    reservas.reset_index(drop=True, inplace=True)
-                    salvar_dados(reservas, "reservas")
-                    st.success("🗑️ Reserva excluída com sucesso.")
-                    st.rerun()
+               st.markdown("---")
+st.markdown("**🗑️ Excluir reserva**")
+confirmar = st.checkbox(
+    f"Confirmar exclusão da reserva de {row.get('cliente','')}",
+    key=f"chk_del_{tipo}_{i}",
+)
+
+if st.button("🗑️ Excluir DEFINITIVAMENTE", key=f"btn_del_{tipo}_{i}") and confirmar:
+    try:
+        # Se a tabela tiver coluna id, usa ela (mais seguro)
+        if "id" in reservas.columns and pd.notna(row.get("id")):
+            deletar_por_filtro("reservas", {"id": row["id"]})
+        else:
+            # Fallback: tenta pelo combo cliente + brinquedos + data
+            deletar_por_filtro(
+                "reservas",
+                {
+                    "cliente": row.get("cliente", ""),
+                    "brinquedos": row.get("brinquedos", ""),
+                    "data": str(row.get("data", "")),
+                },
+            )
+
+        st.success("🗑️ Reserva excluída com sucesso.")
+        st.rerun()
+    except Exception as e:
+        st.error(f"❌ Erro ao excluir reserva: {e}")
+
 
 
                 st.markdown("</div>", unsafe_allow_html=True)
@@ -3384,6 +3400,7 @@ else:
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
 
