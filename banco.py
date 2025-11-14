@@ -148,16 +148,11 @@ def salvar_dados(arg1, arg2):
     registros = df.to_dict(orient="records")
 
     # -------- 2) DEBUG JSON --------
-    print("\n=========== DEBUG RESERVAS ==========")
-    for idx, reg in enumerate(registros):
-        try:
-            json.dumps(reg)  # testa se é JSON válido
-        except Exception as e:
-            print(f"\n❌ ERRO NA LINHA {idx}: {reg}")
-            print(f"Motivo: {e}\n")
-            st.error(f"❌ Registro inválido na linha {idx}: {e}")
-            raise
-    print("=========== FIM DEBUG ==========\n")
+    print("\n======= DEBUG DF BEFORE SAVE =======")
+    print(df.dtypes)
+    print(df.head(10))
+    print("======= END DEBUG =======\n")
+
 
     # -------- 3) DELETE ALL + UPSERT --------
     try:
