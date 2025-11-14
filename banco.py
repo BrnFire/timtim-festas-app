@@ -191,6 +191,20 @@ def atualizar_um(tabela_ou_csv: str, filtro: Dict[str, Any], campos: Dict[str, A
         logging.exception("Erro em atualizar_um(%s)", tabela)
         st.error(f"❌ Erro ao atualizar '{tabela}': {e}")
         raise
+def atualizar_por_filtro(tabela_ou_csv: str, novos_dados: dict, filtro: dict) -> None:
+    """
+    Atualiza registros conforme filtro (WHERE).
+    Mantém compatibilidade com chamadas antigas do app.
+    """
+    tabela = _tabela_from_nome_arquivo(tabela_ou_csv)
+    try:
+        # table_update(tabela, where=filtro, values=novos_dados)
+        table_update(tabela, filtro, novos_dados)
+        st.toast("🔄 Registro atualizado!", icon="✅")
+    except Exception as e:
+        logging.exception("Erro em atualizar_por_filtro(%s)", tabela)
+        st.error(f"❌ Erro ao atualizar '{tabela}': {e}")
+        raise
 
 
 def deletar_por_filtro(tabela_ou_csv: str, filtro: Dict[str, Any]) -> None:
