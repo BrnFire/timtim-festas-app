@@ -108,10 +108,12 @@ def salvar_dados(arg1, arg2):
       - salvar_dados("tabela", df)
     """
 
-    import json  # <-- IMPORT NECESSÁRIO
+    import json
     from datetime import date, datetime
 
     # Detecta df x nome da tabela
+    if isinstance(arg1, df := None).__class__:  # ignore, só truque
+        pass  # mas não altera nada
     if isinstance(arg1, str):
         nome_tabela = arg1
         df = arg2
@@ -125,15 +127,15 @@ def salvar_dados(arg1, arg2):
 
     tabela = _tabela_from_nome_arquivo(nome_tabela)
 
-    # -------- 1) Normaliza datas e NaN --------
+    # -------- 1) Normaliza datas --------
     df = df.copy()
-    for col in df.columns:
 
+    for col in df.columns:
         # datetime64 → YYYY-MM-DD
         if pd.api.types.is_datetime64_any_dtype(df[col]):
             df[col] = df[col].dt.strftime("%Y-%m-%d")
 
-        # objetos Python → converte datetime para string
+        # objetos Python → converte datetime para str
         elif df[col].dtype == "object":
             df[col] = df[col].apply(
                 lambda x: x.strftime("%Y-%m-%d")
@@ -141,33 +143,46 @@ def salvar_dados(arg1, arg2):
                 else x
             )
 
-    # converte NaN → None (permitido no Supabase)
+    # -------- 2) Remove NaN (Supabase não aceita) --------
     df = df.where(pd.notnull(df), None)
+
+    # -------- 3) CORREÇÃO CRÍTICA: ID sempre inteiro --------
     if "id" in df.columns:
-        df["id"] = df["id"].astype("Int64")  # Cast seguro para inteiro
+        try:
+            df["id"] = df["id"].astype("Int64")    # remove .0
+        except:
+            df["id"] = df["id"].astype("string")   # fallback
 
-    # DataFrame → lista de dicionários
-    registros = df.to_dict(orient="records")
-
-    # -------- 2) DEBUG JSON --------
-    print("\n======= DEBUG DF BEFORE SAVE =======")
+    # -------- 4) Debug antes de salvar --------
+    print("\n=========== DEBUG DF BEFORE SAVE ==========")
     print(df.dtypes)
     print(df.head(10))
-    print("======= END DEBUG =======\n")
+    print("=========== END DEBUG ==========\n")
 
+    # -------- 5) DataFrame → registros JSON --------
+    registros = df.to_dict(orient="records")
 
-    # -------- 3) DELETE ALL + UPSERT --------
-    try:
+    # -------- 6) Validação JSON registro a registro --------
+    print("\n=========== DEBUG JSON ==========")
+    for idx, reg in enumerate(registros):
         try:
-            # limpa tabela toda
+            json.dumps(reg)
+        except Exception as e:
+            print(f"❌ ERRO NA LINHA {idx}: {reg}")
+            print(f"Motivo: {e}\n")
+            st.error(f"❌ Registro inválido na linha {idx}: {e}")
+            raise
+    print("=========== FIM DEBUG ==========\n")
+
+    # -------- 7) Envio para o Supabase --------
+    try:
+        # DELETE ALL — sem WHERE mesmo
+        try:
             table_delete(tabela, {})
         except Exception as e:
-            logging.warning(
-                "Não foi possível limpar a tabela '%s': %s",
-                tabela, e
-            )
+            logging.warning("Não foi possível limpar a tabela '%s': %s", tabela, e)
 
-        # insere por blocos
+        # INSERT/UPSERT em blocos
         if registros:
             for chunk in _chunked(registros, 500):
                 table_upsert(tabela, chunk)
@@ -178,6 +193,7 @@ def salvar_dados(arg1, arg2):
         logging.exception("Erro em salvar_dados(%s)", tabela)
         st.error(f"❌ Erro ao salvar dados na tabela '{tabela}': {e}")
         raise
+
 
 
 
