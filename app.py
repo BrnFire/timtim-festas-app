@@ -1019,7 +1019,7 @@ def pagina_reservas():
         "como_conseguiu", "logradouro", "numero", "complemento",
         "bairro", "cidade", "cep", "observacao"
     ]
-    col_reservas = [
+    col_reservas = ["id",
         "cliente", "brinquedos", "data", "horario_entrega", "horario_retirada",
         "inicio_festa", "fim_festa",
         "valor_total", "valor_extra", "frete", "desconto",
@@ -3404,6 +3404,7 @@ else:
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
 
