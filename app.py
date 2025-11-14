@@ -1167,7 +1167,7 @@ def pagina_reservas():
                     st.session_state.editando = int(i)
                     st.rerun()
 
-               st.markdown("---")
+               st.markdown("--")
 st.markdown("**🗑️ Excluir reserva**")
 confirmar = st.checkbox(
     f"Confirmar exclusão da reserva de {row.get('cliente','')}",
@@ -3400,6 +3400,7 @@ else:
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
 
