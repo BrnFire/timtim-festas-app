@@ -103,20 +103,15 @@ def salvar_dados(arg1, arg2):
     """
     Salva um DataFrame no Supabase.
 
-    Aceita as duas formas (pra compatibilidade com o seu app):
+    Aceita:
       - salvar_dados(df, "tabela")
       - salvar_dados("tabela", df)
-
-    A estratégia aqui é:
-      1) Normaliza datas e NaN
-      2) Valida linha a linha com debug JSON
-      3) DELETE ALL na tabela
-      4) INSERT em blocos
     """
 
+    import json  # <-- IMPORT NECESSÁRIO
     from datetime import date, datetime
 
-    # Detecta o que é df e o que é nome da tabela
+    # Detecta df x nome da tabela
     if isinstance(arg1, str):
         nome_tabela = arg1
         df = arg2
@@ -130,12 +125,15 @@ def salvar_dados(arg1, arg2):
 
     tabela = _tabela_from_nome_arquivo(nome_tabela)
 
-    # 1) Normaliza datas/NaN
+    # -------- 1) Normaliza datas e NaN --------
     df = df.copy()
     for col in df.columns:
-        # datas
+
+        # datetime64 → YYYY-MM-DD
         if pd.api.types.is_datetime64_any_dtype(df[col]):
             df[col] = df[col].dt.strftime("%Y-%m-%d")
+
+        # objetos Python → converte datetime para string
         elif df[col].dtype == "object":
             df[col] = df[col].apply(
                 lambda x: x.strftime("%Y-%m-%d")
@@ -143,15 +141,17 @@ def salvar_dados(arg1, arg2):
                 else x
             )
 
-    df = df.where(pd.notnull(df), None)  # NaN -> None
+    # converte NaN → None (permitido no Supabase)
+    df = df.where(pd.notnull(df), None)
 
+    # DataFrame → lista de dicionários
     registros = df.to_dict(orient="records")
 
-    # 2) DEBUG: valida cada registro JSON
+    # -------- 2) DEBUG JSON --------
     print("\n=========== DEBUG RESERVAS ==========")
     for idx, reg in enumerate(registros):
         try:
-            json.dumps(reg)
+            json.dumps(reg)  # testa se é JSON válido
         except Exception as e:
             print(f"\n❌ ERRO NA LINHA {idx}: {reg}")
             print(f"Motivo: {e}\n")
@@ -159,18 +159,18 @@ def salvar_dados(arg1, arg2):
             raise
     print("=========== FIM DEBUG ==========\n")
 
+    # -------- 3) DELETE ALL + UPSERT --------
     try:
-        # 3) DELETE ALL
         try:
+            # limpa tabela toda
             table_delete(tabela, {})
         except Exception as e:
             logging.warning(
-                "Não foi possível limpar a tabela '%s' antes de inserir: %s",
-                tabela,
-                e,
+                "Não foi possível limpar a tabela '%s': %s",
+                tabela, e
             )
 
-        # 4) Insere em blocos
+        # insere por blocos
         if registros:
             for chunk in _chunked(registros, 500):
                 table_upsert(tabela, chunk)
