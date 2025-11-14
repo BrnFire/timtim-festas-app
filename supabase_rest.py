@@ -7,7 +7,7 @@ import requests
 
 # >>> Configure via variáveis de ambiente ou direto aqui:
 SUPABASE_URL = os.getenv("SUPABASE_URL", "https://hmrqsjdlixeazdfhrqqh.supabase.co")
-SUPABASE_ANON_KEY = os.getenv("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhtcnFzamRsaXhlYXpkZmhycXFoIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2MTIyMTcwNSwiZXhwIjoyMDc2Nzk3NzA1fQ.o4M5Ku9Glbg8gCMTFSNCDkgKedn4-ZJWKzeY7IAEKXA")  # troque pelo seu
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhtcnFzamRsaXhlYXpkZmhycXFoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjEyMjE3MDUsImV4cCI6MjA3Njc5NzcwNX0.rM9fob3HIEl2YoL7lB7Tj7vUb21B9EzR1zLSR7VLwTM")  # troque pelo seu
 
 # Headers base (PostgREST + RLS com anon key)
 def _headers(extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
@@ -153,5 +153,6 @@ def import_csv_to_table(table: str, csv_path: str, normalize_headers: bool = Tru
         table_insert(table, chunk)
         total += len(chunk)
     return total
+
 
 
