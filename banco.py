@@ -25,6 +25,7 @@ from supabase_rest import (
     table_insert,
     table_update,
     table_delete,
+    table_upsert,
 )
 
 # ===================================================
