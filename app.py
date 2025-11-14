@@ -196,12 +196,10 @@ def pagina_relatorios():
     # 📦 Carregamento de dados
     # =========================
     reservas = carregar_dados("reservas", [
-    "id",  # ⬅️ IMPORTANTE
-    "cliente", "brinquedos", "data",
-    "horario_entrega", "horario_retirada",
-    "inicio_festa", "fim_festa",
-    "valor_total", "valor_extra", "frete", "desconto",
-    "sinal", "falta", "observacao", "status", "pagamentos"
+        "cliente", "brinquedos", "data",
+        "horario_entrega", "horario_retirada",
+        "valor_total", "valor_extra", "frete", "desconto",
+        "sinal", "falta", "observacao", "status", "pagamentos"
     ])
     custos = carregar_dados("custos", ["data", "descricao", "valor"])
     brinquedos_df = carregar_dados("brinquedos", ["nome", "valor", "categoria"])
@@ -1021,7 +1019,7 @@ def pagina_reservas():
         "como_conseguiu", "logradouro", "numero", "complemento",
         "bairro", "cidade", "cep", "observacao"
     ]
-    col_reservas = ["id",
+    col_reservas = [
         "cliente", "brinquedos", "data", "horario_entrega", "horario_retirada",
         "inicio_festa", "fim_festa",
         "valor_total", "valor_extra", "frete", "desconto",
@@ -1098,121 +1096,89 @@ def pagina_reservas():
     # ========================================
     aba_hoje, aba_futuras, aba_passadas = st.tabs(["📅 Hoje", "🚀 Futuras", "📖 Histórico"])
 
-def _cartao_reserva(df, tipo):
-    if df.empty:
-        st.info(f"Nenhuma reserva {tipo.lower()} encontrada.")
-        return
+    def _cartao_reserva(df, tipo):
+        if df.empty:
+            st.info(f"Nenhuma reserva {tipo.lower()} encontrada.")
+            return
 
-    for i, row in df.sort_values("data").iterrows():
-        dias_restantes = (row["data"] - hoje).days if pd.notna(row["data"]) else 0
+        for i, row in df.sort_values("data").iterrows():
+            dias_restantes = (row["data"] - hoje).days if pd.notna(row["data"]) else 0
+            if row["status"] == "Concluído":
+                cor_card = "#D6EAF8"
+            elif dias_restantes < 0:
+                cor_card = "#FADBD8"
+            elif dias_restantes <= 3:
+                cor_card = "#FCF3CF"
+            else:
+                cor_card = "#D5F5E3"
 
-        if row["status"] == "Concluído":
-            cor_card = "#D6EAF8"
-        elif dias_restantes < 0:
-            cor_card = "#FADBD8"
-        elif dias_restantes <= 3:
-            cor_card = "#FCF3CF"
-        else:
-            cor_card = "#D5F5E3"
+            if pd.notna(row["data"]):
+                data_fmt = pd.to_datetime(row["data"]).strftime("%d/%m/%Y")
+            else:
+                data_fmt = "-"
 
-        if pd.notna(row["data"]):
-            data_fmt = pd.to_datetime(row["data"]).strftime("%d/%m/%Y")
-        else:
-            data_fmt = "-"
-
-        if row["status"] == "Concluído":
-            label_tempo = "🟦 Concluída"
-        elif dias_restantes == 0:
-            label_tempo = "🔴 Hoje"
-        elif dias_restantes == 1:
-            label_tempo = "⚠️ Amanhã"
-        elif dias_restantes <= 3:
-            label_tempo = f"🟡 Faltam {dias_restantes} dias"
-        else:
-            label_tempo = f"🟩 Em {dias_restantes} dias"
-
-        with st.expander(f"🎈 {row.get('cliente','')} - {data_fmt} ({label_tempo})"):
-
-            st.markdown(
-                f"<div style='background-color:{cor_card};padding:10px;border-radius:8px;'>",
-                unsafe_allow_html=True,
+            label_tempo = (
+                "🟦 Concluída" if row["status"] == "Concluído"
+                else "🔴 Hoje" if dias_restantes == 0
+                else "⚠️ Amanhã" if dias_restantes == 1
+                else f"🟡 Faltam {dias_restantes} dias" if dias_restantes <= 3
+                else f"🟩 Em {dias_restantes} dias"
             )
 
-            st.write(f"**Brinquedos:** {row.get('brinquedos','')}")
-            st.write(f"**Horário Entrega:** {row.get('horario_entrega','')}")
-            st.write(f"**Horário Retirada:** {row.get('horario_retirada','')}")
-            st.write(f"**Início da Festa:** {row.get('inicio_festa','')}")
-            st.write(f"**Fim da Festa:** {row.get('fim_festa','')}")
-            st.write(f"**Valor Total:** R$ {float(row.get('valor_total',0)):.2f}")
-            st.write(f"**Pago (Sinal):** R$ {float(row.get('sinal',0)):.2f}")
-            st.write(f"**Falta Receber:** R$ {float(row.get('falta',0)):.2f}")
-            st.write(f"**Frete:** R$ {float(row.get('frete',0)):.2f}")
-            st.write(f"**Status:** {row.get('status','') or 'Pendente'}")
+            with st.expander(f"🎈 {row.get('cliente','')} - {data_fmt} ({label_tempo})"):
+                st.markdown(f"<div style='background-color:{cor_card};padding:10px;border-radius:8px;'>", unsafe_allow_html=True)
 
-            nova_obs = st.text_area(
-                "📝 Atualizar observação",
-                value=str(row.get("observacao", "")),
-                key=f"obs_{tipo}_{i}",
-            )
-            if st.button("💾 Salvar observação", key=f"btn_obs_{tipo}_{i}"):
-                reservas.at[i, "observacao"] = nova_obs
-                salvar_dados(reservas, "reservas")
-                st.success("📝 Observação salva com sucesso!")
-                st.rerun()
+                st.write(f"**Brinquedos:** {row.get('brinquedos','')}")
+                st.write(f"**Horário Entrega:** {row.get('horario_entrega','')}")
+                st.write(f"**Horário Retirada:** {row.get('horario_retirada','')}")
+                st.write(f"**Início da Festa:** {row.get('inicio_festa','')}")
+                st.write(f"**Fim da Festa:** {row.get('fim_festa','')}")
+                st.write(f"**Valor Total:** R$ {float(row.get('valor_total',0)):,.2f}")
+                st.write(f"**Pago (Sinal):** R$ {float(row.get('sinal',0)):,.2f}")
+                st.write(f"**Falta Receber:** R$ {float(row.get('falta',0)):,.2f}")
+                st.write(f"**Frete:** R$ {float(row.get('frete',0)):,.2f}")
+                st.write(f"**Status:** {row.get('status','') or 'Pendente'}")
 
-            valor_parcial = st.number_input(
-                "Registrar pagamento (R$)",
-                min_value=0.0,
-                step=10.0,
-                key=f"pag_{tipo}_{i}",
-            )
-            if st.button("💰 Confirmar pagamento", key=f"btn_pag_{tipo}_{i}"):
-                if valor_parcial > 0:
-                    reservas.at[i, "sinal"] = float(reservas.at[i, "sinal"]) + float(valor_parcial)
-                    reservas.at[i, "falta"] = max(
-                        float(reservas.at[i, "valor_total"]) - float(reservas.at[i, "sinal"]),
-                        0.0,
-                    )
-                    reservas.at[i, "status"] = (
-                        "Concluído" if float(reservas.at[i, "falta"]) == 0 else "Pendente"
-                    )
+                # Observação
+                nova_obs = st.text_area("📝 Atualizar observação", value=str(row.get("observacao","")), key=f"obs_{tipo}_{i}")
+                if st.button("💾 Salvar observação", key=f"btn_obs_{tipo}_{i}"):
+                    reservas.at[i, "observacao"] = nova_obs
                     salvar_dados(reservas, "reservas")
-                    st.success(f"💰 Pagamento de R$ {valor_parcial:.2f} registrado!")
+                    st.success("📝 Observação salva com sucesso!")
+                    st.balloons()
                     st.rerun()
 
-            if st.button("✏️ Editar reserva", key=f"edit_{tipo}_{i}"):
-                st.session_state.editando = int(i)
-                st.rerun()
+                # Pagamento parcial
+                valor_parcial = st.number_input("Registrar pagamento (R$)", min_value=0.0, step=10.0, key=f"pag_{tipo}_{i}")
+                if st.button("💰 Confirmar pagamento", key=f"btn_pag_{tipo}_{i}"):
+                    if valor_parcial > 0:
+                        reservas.at[i, "sinal"] = float(reservas.at[i, "sinal"]) + float(valor_parcial)
+                        reservas.at[i, "falta"] = max(float(reservas.at[i, "valor_total"]) - float(reservas.at[i, "sinal"]), 0.0)
+                        reservas.at[i, "status"] = "Concluído" if float(reservas.at[i, "falta"]) == 0 else "Pendente"
+                        salvar_dados(reservas, "reservas")
+                        st.success(f"💰 Pagamento de R$ {valor_parcial:,.2f} registrado!")
+                        st.balloons()
+                        st.rerun()
 
-            st.markdown("---")
-            st.markdown("**🗑️ Excluir reserva**")
+                                # Editar / Excluir
+                if st.button("✏️ Editar reserva", key=f"edit_{tipo}_{i}"):
+                    st.session_state.editando = int(i)
+                    st.rerun()
 
-            confirmar = st.checkbox(
-                f"Confirmar exclusão da reserva de {row.get('cliente','')}",
-                key=f"chk_del_{tipo}_{i}",
-            )
-
-            if st.button("🗑️ Excluir DEFINITIVAMENTE", key=f"btn_del_{tipo}_{i}") and confirmar:
-                try:
-                    if "id" in reservas.columns and pd.notna(row.get("id")):
-                        deletar_por_filtro("reservas", {"id": row["id"]})
-                    else:
-                        deletar_por_filtro(
-                            "reservas",
-                            {
-                                "cliente": row.get("cliente", ""),
-                                "brinquedos": row.get("brinquedos", ""),
-                                "data": str(row.get("data", "")),
-                            },
-                        )
-
+                st.markdown("---")
+                st.markdown("**🗑️ Excluir reserva**")
+                confirmar = st.checkbox(
+                    f"Confirmar exclusão da reserva de {row.get('cliente','')}",
+                    key=f"chk_del_{tipo}_{i}"
+                )
+                if st.button("🗑️ Excluir DEFINITIVAMENTE", key=f"btn_del_{tipo}_{i}") and confirmar:
+                    reservas.drop(index=i, inplace=True)
+                    reservas.reset_index(drop=True, inplace=True)
+                    salvar_dados(reservas, "reservas")
                     st.success("🗑️ Reserva excluída com sucesso.")
                     st.rerun()
 
-                except Exception as e:
-                    st.error(f"❌ Erro ao excluir reserva: {e}")
 
-        
                 st.markdown("</div>", unsafe_allow_html=True)
 
     with aba_hoje:
@@ -3416,12 +3382,6 @@ else:
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
-
-
-
-
-
-
 
 
 
