@@ -1160,19 +1160,24 @@ def pagina_reservas():
                         st.balloons()
                         st.rerun()
 
-                # Editar / Excluir
+                                # Editar / Excluir
                 if st.button("✏️ Editar reserva", key=f"edit_{tipo}_{i}"):
                     st.session_state.editando = int(i)
                     st.rerun()
 
-                with st.expander("🗑️ Excluir reserva"):
-                    confirmar = st.checkbox(f"Confirmar exclusão da reserva de {row.get('cliente','')}", key=f"chk_del_{tipo}_{i}")
-                    if st.button("🗑️ Excluir DEFINITIVAMENTE", key=f"btn_del_{tipo}_{i}") and confirmar:
-                        reservas.drop(index=i, inplace=True)
-                        reservas.reset_index(drop=True, inplace=True)
-                        salvar_dados(reservas, "reservas")
-                        st.success("🗑️ Reserva excluída com sucesso.")
-                        st.rerun()
+                st.markdown("---")
+                st.markdown("**🗑️ Excluir reserva**")
+                confirmar = st.checkbox(
+                    f"Confirmar exclusão da reserva de {row.get('cliente','')}",
+                    key=f"chk_del_{tipo}_{i}"
+                )
+                if st.button("🗑️ Excluir DEFINITIVAMENTE", key=f"btn_del_{tipo}_{i}") and confirmar:
+                    reservas.drop(index=i, inplace=True)
+                    reservas.reset_index(drop=True, inplace=True)
+                    salvar_dados(reservas, "reservas")
+                    st.success("🗑️ Reserva excluída com sucesso.")
+                    st.rerun()
+
 
                 st.markdown("</div>", unsafe_allow_html=True)
 
@@ -3377,6 +3382,7 @@ else:
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
 
