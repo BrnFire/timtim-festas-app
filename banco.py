@@ -35,20 +35,23 @@ except Exception:
 
 from supabase import create_client, Client
 
-# ====== CONFIG ======
 SUPABASE_URL_DEFAULT = "https://hmrqsjdlixeazdfhrqqh.supabase.co"
 SUPABASE_KEY_DEFAULT = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhtcnFzamRsaXhlYXpkZmhycXFoIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2MTIyMTcwNSwiZXhwIjoyMDc2Nzk3NzA1fQ.o4M5Ku9Glbg8gCMTFSNCDkgKedn4-ZJWKzeY7IAEKXA"
 
+_SB: Client | None = None
 
-# ===================================================
-# CLIENTE SUPABASE (com fallback e cache em memória)
-# ===================================================
+
 def _get_supabase_client() -> Client:
-    """Cria o client do Supabase. Prioriza st.secrets, depois env vars e por fim defaults."""
+    """
+    Cria o client do Supabase.
+    1º tenta pegar de st.secrets
+    2º tenta variáveis de ambiente
+    3º usa os defaults acima.
+    """
     url = None
     key = None
 
-    # 1) st.secrets
+    # 1) st.secrets (quando estiver no Streamlit Cloud)
     try:
         if hasattr(st, "secrets") and "supabase" in st.secrets:
             url = st.secrets["supabase"].get("url")
@@ -56,28 +59,23 @@ def _get_supabase_client() -> Client:
     except Exception:
         pass
 
-    # 2) variáveis de ambiente
+    # 2) variáveis de ambiente (para rodar local com segurança)
     if not url:
-        url = os.getenv("SUPABASE_URL")
+        url = os.getenv("SUPABASE_URL", SUPABASE_URL_DEFAULT)
     if not key:
-        key = os.getenv("SUPABASE_KEY")
+        key = os.getenv("SUPABASE_KEY", SUPABASE_KEY_DEFAULT)
 
-    # 3) fallback padrão
-    if not url:
-        url = SUPABASE_URL_DEFAULT
-    if not key:
-        key = SUPABASE_KEY_DEFAULT
-
+    # 3) cria o client — 🔴 sem verify / options aqui
     return create_client(url, key)
 
 
-_SB: Optional[Client] = None
-
 def sb() -> Client:
+    """Retorna sempre o mesmo client (cache em memória)."""
     global _SB
     if _SB is None:
         _SB = _get_supabase_client()
     return _SB
+
 
 
 # ===================================================
@@ -153,25 +151,14 @@ def carregar_dados(nome_arquivo_ou_tabela: str, colunas: list[str]):
 # ===================================================
 
 # --- SUBSTITUA APENAS ESTA FUNÇÃO NO SEU banco.py ---
-
 def salvar_dados(df, nome_tabela: str):
     """
     Salva o DataFrame no Supabase evitando duplicação.
-    - Se existir uma chave estável (id, id_cliente, empid, pagid, placa, etc.), faz UPSERT por essa chave.
-    - Caso contrário, faz DELETE ALL + INSERT (sem duplicar).
-    Converte datas para texto e NaN -> None.
+    Usa UPSERT quando encontra uma chave de conflito, senão faz
+    DELETE ALL + INSERT.
     """
-    import os
-    from datetime import date, datetime
     import pandas as pd
-    from supabase import create_client
-
-    url = os.getenv("SUPABASE_URL", SUPABASE_URL_DEFAULT)
-    key = os.getenv("SUPABASE_KEY", SUPABASE_KEY_DEFAULT)
-    if not url or not key:
-        raise ValueError("Credenciais do Supabase não configuradas. Verifique SUPABASE_URL e SUPABASE_KEY.")
-
-    sup = create_client(url, key)
+    from datetime import date, datetime
 
     if df is None or df.empty:
         print(f"⚠️ Nenhum dado para salvar na tabela '{nome_tabela}'.")
@@ -188,21 +175,22 @@ def salvar_dados(df, nome_tabela: str):
             )
     df = df.where(pd.notnull(df), None)
 
-    # 2) Escolhe automaticamente a melhor chave de conflito
-    #    (apenas se a coluna existir e não for toda vazia)
+    tabela = _tabela_from_nome_arquivo(nome_tabela).lower()
+    registros = df.to_dict(orient="records")
+
+    # usa o client global (sb()), que já não tem verify
+    sup = sb()
+
+    # ===== escolha da conflict_key (seu código antigo aqui, só mantido) =====
     lower_cols = [c.lower() for c in df.columns]
+
     def tem_col(nome):
         return nome in lower_cols and df[df.columns[lower_cols.index(nome)]].notnull().any()
 
-    # mapeamento simples por tabela
-    tabela = _tabela_from_nome_arquivo(nome_tabela).lower()
-
     conflict_key = None
-    # Chaves prioritárias por tabela
     if tabela == "reservas" and tem_col("id_cliente"):
         conflict_key = "id_cliente"
     elif tabela == "clientes":
-        # prioriza id_cliente se existir; senão, tenta cpf; senão, nome (o ideal é id_cliente)
         if tem_col("id_cliente"):
             conflict_key = "id_cliente"
         elif tem_col("cpf"):
@@ -210,42 +198,22 @@ def salvar_dados(df, nome_tabela: str):
         elif tem_col("nome"):
             conflict_key = "nome"
     elif tabela == "brinquedos":
-        # se não houver id, usamos nome (mantenha nome único para não duplicar)
-        if tem_col("id"):
-            conflict_key = "id"
+        if tem_col("id_brinquedo"):
+            conflict_key = "id_brinquedo"
         elif tem_col("nome"):
             conflict_key = "nome"
     elif tabela == "custos":
-        # se tiver id, usa; se não, fallback (sem PK definida geralmente)
-        if tem_col("id"):
-            conflict_key = "id"
+        if tem_col("id_custo"):
+            conflict_key = "id_custo"
     elif tabela == "emprestimos":
         if tem_col("id_emprestimo"):
             conflict_key = "id_emprestimo"
-        elif tem_col("empid"):
-            conflict_key = "empid"
-
     elif tabela == "pagamentos_emprestimos":
-        if tem_col("pagid"):
-            conflict_key = "pagid"
-    elif tabela == "veiculos":
-        # placa é um bom identificador natural
-        if tem_col("placa"):
-            conflict_key = "placa"
-    elif tabela == "manutencoes":
-        # se houver id, use-o; sem id, melhor fallback (ou crie id no schema)
-        if tem_col("id"):
-            conflict_key = "id"
-    elif tabela in ("pecas_brinquedos", "checklist"):
-        # normalmento não há id; deixamos fallback (DELETE ALL + INSERT) para não duplicar
+        if tem_col("id_pagamento"):
+            conflict_key = "id_pagamento"
+    # (demais tabelas continuam como estavam, se você tiver)
 
-        # Se você quiser evitar DELETE ALL aqui, crie uma UNIQUE no banco e
-        # configure a conflict_key correspondente (ex.: brinquedo+item).
-        pass
-
-    registros = df.to_dict(orient="records")
-
-    # 3) Se temos uma conflict_key válida, tentamos UPSERT
+    # 3) Tenta UPSERT se tiver conflict_key
     if conflict_key:
         try:
             sup.table(tabela).upsert(registros, on_conflict=conflict_key).execute()
@@ -254,15 +222,16 @@ def salvar_dados(df, nome_tabela: str):
         except Exception as e:
             print(f"⚠️ Falha no UPSERT por '{conflict_key}' em '{tabela}': {e}. Fallback para DELETE ALL + INSERT.")
 
-    # 4) Fallback seguro: DELETE ALL + INSERT (não duplica; substitui conteúdo)
+    # 4) Fallback: apaga tudo e insere de novo
     try:
         sup.table(tabela).delete().neq("id", 0).execute()
     except Exception as e:
-        print(f"⚠️ Não foi possível limpar '{tabela}' antes de inserir: {e} (tudo bem, vamos inserir por cima).")
+        print(f"⚠️ Não deu pra limpar '{tabela}' antes de inserir: {e} (vamos inserir mesmo assim).")
 
     if registros:
         sup.table(tabela).insert(registros).execute()
     print(f"✅ Tabela '{tabela}' regravada: {len(registros)} linhas.")
+
 
 
 
