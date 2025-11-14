@@ -1021,7 +1021,7 @@ def pagina_reservas():
         "como_conseguiu", "logradouro", "numero", "complemento",
         "bairro", "cidade", "cep", "observacao"
     ]
-    col_reservas = [
+    col_reservas = ["id",
         "cliente", "brinquedos", "data", "horario_entrega", "horario_retirada",
         "inicio_festa", "fim_festa",
         "valor_total", "valor_extra", "frete", "desconto",
@@ -1098,13 +1098,14 @@ def pagina_reservas():
     # ========================================
     aba_hoje, aba_futuras, aba_passadas = st.tabs(["📅 Hoje", "🚀 Futuras", "📖 Histórico"])
 
-    def _cartao_reserva(df, tipo):
+        def _cartao_reserva(df, tipo):
         if df.empty:
             st.info(f"Nenhuma reserva {tipo.lower()} encontrada.")
             return
 
         for i, row in df.sort_values("data").iterrows():
             dias_restantes = (row["data"] - hoje).days if pd.notna(row["data"]) else 0
+
             if row["status"] == "Concluído":
                 cor_card = "#D6EAF8"
             elif dias_restantes < 0:
@@ -1128,21 +1129,28 @@ def pagina_reservas():
             )
 
             with st.expander(f"🎈 {row.get('cliente','')} - {data_fmt} ({label_tempo})"):
-                st.markdown(f"<div style='background-color:{cor_card};padding:10px;border-radius:8px;'>", unsafe_allow_html=True)
+                st.markdown(
+                    f"<div style='background-color:{cor_card};padding:10px;border-radius:8px;'>",
+                    unsafe_allow_html=True,
+                )
 
                 st.write(f"**Brinquedos:** {row.get('brinquedos','')}")
                 st.write(f"**Horário Entrega:** {row.get('horario_entrega','')}")
                 st.write(f"**Horário Retirada:** {row.get('horario_retirada','')}")
                 st.write(f"**Início da Festa:** {row.get('inicio_festa','')}")
                 st.write(f"**Fim da Festa:** {row.get('fim_festa','')}")
-                st.write(f"**Valor Total:** R$ {float(row.get('valor_total',0)):,.2f}")
-                st.write(f"**Pago (Sinal):** R$ {float(row.get('sinal',0)):,.2f}")
-                st.write(f"**Falta Receber:** R$ {float(row.get('falta',0)):,.2f}")
-                st.write(f"**Frete:** R$ {float(row.get('frete',0)):,.2f}")
+                st.write(f"**Valor Total:** R$ {float(row.get('valor_total',0)):.2f}")
+                st.write(f"**Pago (Sinal):** R$ {float(row.get('sinal',0)):.2f}")
+                st.write(f"**Falta Receber:** R$ {float(row.get('falta',0)):.2f}")
+                st.write(f"**Frete:** R$ {float(row.get('frete',0)):.2f}")
                 st.write(f"**Status:** {row.get('status','') or 'Pendente'}")
 
                 # Observação
-                nova_obs = st.text_area("📝 Atualizar observação", value=str(row.get("observacao","")), key=f"obs_{tipo}_{i}")
+                nova_obs = st.text_area(
+                    "📝 Atualizar observação",
+                    value=str(row.get("observacao", "")),
+                    key=f"obs_{tipo}_{i}",
+                )
                 if st.button("💾 Salvar observação", key=f"btn_obs_{tipo}_{i}"):
                     reservas.at[i, "observacao"] = nova_obs
                     salvar_dados(reservas, "reservas")
@@ -1151,40 +1159,47 @@ def pagina_reservas():
                     st.rerun()
 
                 # Pagamento parcial
-                valor_parcial = st.number_input("Registrar pagamento (R$)", min_value=0.0, step=10.0, key=f"pag_{tipo}_{i}")
+                valor_parcial = st.number_input(
+                    "Registrar pagamento (R$)",
+                    min_value=0.0,
+                    step=10.0,
+                    key=f"pag_{tipo}_{i}",
+                )
                 if st.button("💰 Confirmar pagamento", key=f"btn_pag_{tipo}_{i}"):
                     if valor_parcial > 0:
                         reservas.at[i, "sinal"] = float(reservas.at[i, "sinal"]) + float(valor_parcial)
-                        reservas.at[i, "falta"] = max(float(reservas.at[i, "valor_total"]) - float(reservas.at[i, "sinal"]), 0.0)
-                        reservas.at[i, "status"] = "Concluído" if float(reservas.at[i, "falta"]) == 0 else "Pendente"
+                        reservas.at[i, "falta"] = max(
+                            float(reservas.at[i, "valor_total"]) - float(reservas.at[i, "sinal"]),
+                            0.0,
+                        )
+                        reservas.at[i, "status"] = (
+                            "Concluído" if float(reservas.at[i, "falta"]) == 0 else "Pendente"
+                        )
                         salvar_dados(reservas, "reservas")
-                        st.success(f"💰 Pagamento de R$ {valor_parcial:,.2f} registrado!")
+                        st.success(f"💰 Pagamento de R$ {valor_parcial:.2f} registrado!")
                         st.balloons()
                         st.rerun()
 
-                                # Editar / Excluir
+                # Editar reserva
                 if st.button("✏️ Editar reserva", key=f"edit_{tipo}_{i}"):
                     st.session_state.editando = int(i)
                     st.rerun()
 
+                # EXCLUIR RESERVA (agora direto no Supabase)
                 st.markdown("---")
                 st.markdown("**🗑️ Excluir reserva**")
-
                 confirmar = st.checkbox(
                     f"Confirmar exclusão da reserva de {row.get('cliente','')}",
                     key=f"chk_del_{tipo}_{i}",
                 )
 
-                if (
-                    st.button("🗑️ Excluir DEFINITIVAMENTE", key=f"btn_del_{tipo}_{i}")
-                    and confirmar
-                ):
+                if st.button("🗑️ Excluir DEFINITIVAMENTE", key=f"btn_del_{tipo}_{i}") and confirmar:
                     try:
-                        # Excluir usando o ID, se existir
                         if "id" in reservas.columns and pd.notna(row.get("id")):
+                            # Exclui pelo ID (mais seguro)
                             deletar_por_filtro("reservas", {"id": row["id"]})
                         else:
-                            # Fallback: excluir pelo trio cliente + brinquedos + data
+                            # Fallback: cliente + brinquedos + data
                             deletar_por_filtro(
                                 "reservas",
                                 {
@@ -1196,9 +1211,9 @@ def pagina_reservas():
 
                         st.success("🗑️ Reserva excluída com sucesso.")
                         st.rerun()
-
                     except Exception as e:
                         st.error(f"❌ Erro ao excluir reserva: {e}")
+
 
 
 
@@ -3406,6 +3421,7 @@ else:
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
 
