@@ -1591,11 +1591,13 @@ import pandas as pd
 import uuid
 from datetime import datetime, timedelta
 import requests
-from banco import carregar_dados, inserir_um, deletar_por_filtro
+from banco import carregar_dados, salvar_dados, inserir_um, atualizar_por_filtro, deletar_por_filtro
+
 
 # ============================================================
 # FUNÇÃO PRINCIPAL
 # ============================================================
+
 def pagina_custos():
     st.header("💸 Controle de Custos")
 
@@ -1605,7 +1607,7 @@ def pagina_custos():
     # 🧾 ABA 1 - LANÇAR CUSTOS
     # ============================================================
     with aba[0]:
-        cols_custos = ["id_custo", "descricao", "categoria", "valor", "data", "forma_de_pagamento", "observacao"]
+        cols_custos = ["descricao", "categoria", "valor", "data", "forma_de_pagamento", "observacao"]
 
         try:
             df = carregar_dados("custos", cols_custos)
@@ -1613,18 +1615,16 @@ def pagina_custos():
                 df = pd.DataFrame(columns=cols_custos)
             else:
                 df.columns = [c.lower().strip().replace(" ", "_") for c in df.columns]
-                if "id_custo" not in df.columns:
-                    df["id_custo"] = [str(uuid.uuid4()) for _ in range(len(df))]
+                if "valor" not in df.columns:
+                    df["valor"] = 0.0
+                df = _ensure_cols(df, cols_custos)
         except Exception as e:
             st.error(f"❌ Erro ao carregar dados de custos: {e}")
             df = pd.DataFrame(columns=cols_custos)
 
-        df["valor"] = pd.to_numeric(df.get("valor", 0), errors="coerce").fillna(0.0)
-        df["data"] = pd.to_datetime(df.get("data", datetime.now()), errors="coerce")
+        df["valor"] = pd.to_numeric(df["valor"], errors="coerce").fillna(0.0)
+        df["data"] = df["data"].apply(_to_date_safe)
 
-        # ============================
-        # FILTRO DE PERÍODO
-        # ============================
         st.subheader("📆 Filtro de Período")
         hoje = datetime.now().date()
         opcoes = ["Mês Atual", "Últimos 7 dias", "Últimos 30 dias", "Período Personalizado"]
@@ -1646,10 +1646,13 @@ def pagina_custos():
             with c2:
                 data_final = st.date_input("Data final", value=hoje)
 
-        filtrado = df[
-            (df["data"].dt.date >= data_inicial) &
-            (df["data"].dt.date <= data_final)
-        ].copy() if not df.empty else pd.DataFrame(columns=cols_custos)
+        if not df.empty:
+            filtrado = df[
+                (df["data"] >= pd.to_datetime(data_inicial)) &
+                (df["data"] <= pd.to_datetime(data_final))
+            ].copy()
+        else:
+            filtrado = df.copy()
 
         total_periodo = filtrado["valor"].sum() if not filtrado.empty else 0.0
         total_geral = df["valor"].sum() if not df.empty else 0.0
@@ -1662,9 +1665,6 @@ def pagina_custos():
 
         st.divider()
 
-        # ============================
-        # FORMULÁRIO DE CUSTO
-        # ============================
         with st.form("form_custo"):
             descricao = st.text_input("Descrição")
             categoria = st.selectbox(
@@ -1685,7 +1685,6 @@ def pagina_custos():
             if salvar:
                 if descricao and valor > 0:
                     novo = {
-                        "id_custo": str(uuid.uuid4()),
                         "descricao": descricao,
                         "categoria": categoria,
                         "valor": float(valor),
@@ -1693,34 +1692,15 @@ def pagina_custos():
                         "forma_de_pagamento": forma,
                         "observacao": observacao
                     }
-
-                    try:
-                        df_existente = carregar_dados("custos", list(novo.keys()))
-
-                        duplicado = df_existente[
-                            (df_existente["descricao"] == descricao) &
-                            (df_existente["valor"].astype(float) == float(valor)) &
-                            (df_existente["data"].astype(str) == str(data_val)) &
-                            (df_existente["categoria"] == categoria)
-                        ]
-
-                        if not duplicado.empty:
-                            st.warning("⚠️ Este custo já foi registrado anteriormente!")
-                        else:
-                            inserir_um("custos", novo)
-                            st.success(f"✅ Custo '{descricao}' registrado com sucesso!")
-                            st.rerun()
-
-                    except Exception as e:
-                        st.error(f"❌ Erro ao salvar custo: {e}")
+                    df.loc[len(df)] = novo
+                    salvar_dados(df, "custos")
+                    st.success(f"✅ Custo '{descricao}' registrado com sucesso!")
+                    st.rerun()
                 else:
                     st.warning("⚠️ Informe uma descrição e um valor maior que zero.")
 
         st.divider()
 
-        # ============================
-        # RESUMO POR CATEGORIA
-        # ============================
         if not filtrado.empty:
             st.subheader("📊 Resumo por Categoria")
             resumo = filtrado.groupby("categoria", dropna=False)["valor"].sum().reset_index().sort_values("valor", ascending=False)
@@ -1741,30 +1721,159 @@ def pagina_custos():
 
         st.divider()
 
-        # ============================
-        # LISTAGEM DE CUSTOS
-        # ============================
         st.subheader("📋 Custos Registrados")
         if not filtrado.empty:
             df_sorted = filtrado.sort_values(by="data", ascending=False)
             for i, row in df_sorted.iterrows():
-                data_fmt = row["data"].strftime("%d/%m/%Y") if pd.notna(row["data"]) else "-"
+                data_fmt = pd.to_datetime(row["data"]).date().strftime("%d/%m/%Y") if pd.notna(row["data"]) else "-"
                 with st.expander(f"💸 {row['descricao']} - {row['categoria']} ({data_fmt})"):
                     st.write(f"**Valor:** R$ {float(row['valor']):.2f}")
                     st.write(f"**Forma de Pagamento:** {row.get('forma_de_pagamento','')}")
                     st.write(f"**Observação:** {row.get('observacao') or '-'}")
 
-                           
-                    if st.button("🗑️ Excluir", key=f"del_custo_{row['id_custo']}"):
-                        try:
-                            deletar_por_filtro("custos", {"id_custo": row["id_custo"]})
-                            st.warning(f"🗑️ Custo '{row['descricao']}' excluído com sucesso!")
+                    if st.button("🗑️ Excluir", key=f"del_custo_{i}"):
+                        idx_abs = row.name
+                        if idx_abs in df.index:
+                            df = df.drop(idx_abs).reset_index(drop=True)
+                            salvar_dados(df, "custos")
+                            st.warning(f"🗑️ Custo '{row['descricao']}' excluído!")
                             st.rerun()
-                        except Exception as e:
-                            st.error(f"Erro ao excluir: {e}")
-
         else:
             st.info("Nenhum custo cadastrado ainda.")
+
+    # ============================================================
+    # 🏦 ABA 2 - EMPRÉSTIMOS
+    # ============================================================
+    with aba[1]:
+        st.subheader("🏦 Controle de Empréstimos")
+
+        cols_emp = [
+            "id_emprestimo", "descricao", "observacao",
+            "valor_recebido", "valor_a_pagar", "juros",
+            "parcelas", "valor_pendente", "data", "status",
+            "criado_em", "atualizado_em"
+        ]
+
+        df_emp = carregar_dados("emprestimos", cols_emp).copy()
+        df_pag = carregar_dados("pagamentos_emprestimos", ["id_pagamento", "id_emprestimo", "descricao", "valor_pago", "data_pagamento"]).copy()
+
+        if not df_emp.empty:
+            df_emp["valor_recebido"] = pd.to_numeric(df_emp["valor_recebido"], errors="coerce").fillna(0.0)
+            df_emp["valor_a_pagar"] = pd.to_numeric(df_emp["valor_a_pagar"], errors="coerce").fillna(0.0)
+            df_emp["valor_pendente"] = pd.to_numeric(df_emp["valor_pendente"], errors="coerce").fillna(0.0)
+            df_emp["data"] = df_emp["data"].apply(_to_date_safe)
+
+        if not df_pag.empty:
+            df_pag["valor_pago"] = pd.to_numeric(df_pag["valor_pago"], errors="coerce").fillna(0.0)
+            df_pag["data_pagamento"] = df_pag["data_pagamento"].apply(_to_date_safe)
+
+        total_recebido = df_emp["valor_recebido"].sum() if not df_emp.empty else 0
+        total_pagar = df_emp["valor_a_pagar"].sum() if not df_emp.empty else 0
+        total_pendente = df_emp["valor_pendente"].sum() if not df_emp.empty else 0
+        total_pago = total_pagar - total_pendente
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("💰 Recebido", f"R$ {total_recebido:,.2f}")
+        c2.metric("💸 A Pagar", f"R$ {total_pagar:,.2f}")
+        c3.metric("✅ Pago", f"R$ {total_pago:,.2f}")
+        c4.metric("🟡 Pendente", f"R$ {total_pendente:,.2f}")
+
+        st.divider()
+        st.subheader("📥 Registrar novo empréstimo")
+
+        with st.form("form_emp"):
+            descricao = st.text_input("Descrição do Empréstimo")
+            obs = st.text_area("Observação (motivo)")
+            val_rec = st.number_input("Valor Recebido", min_value=0.0, step=100.0)
+            val_pag = st.number_input("Valor a Pagar", min_value=0.0, step=100.0)
+            parcelas = st.number_input("Parcelas", min_value=1, step=1)
+            data_emp = st.date_input("Data", value=datetime.today())
+            salvar_emp = st.form_submit_button("💾 Salvar Empréstimo")
+
+            if salvar_emp and descricao and val_rec > 0:
+                juros = round(((val_pag - val_rec) / val_rec) * 100, 2) if val_rec else 0.0
+                novo_emp = {
+                    "descricao": descricao,
+                    "observacao": obs,
+                    "valor_recebido": float(val_rec),
+                    "valor_a_pagar": float(val_pag),
+                    "juros": juros,
+                    "parcelas": int(parcelas),
+                    "valor_pendente": float(val_pag),
+                    "data": str(data_emp),
+                    "status": "🟡 Pendente"
+                }
+                try:
+                    inserir_um("emprestimos", novo_emp)
+                    st.success("✅ Empréstimo registrado com sucesso!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Erro ao salvar empréstimo: {e}")
+
+        st.divider()
+
+        if df_emp.empty:
+            st.info("Nenhum empréstimo registrado ainda.")
+            return
+
+        for _, row in df_emp.sort_values("data", ascending=False).iterrows():
+            with st.expander(f"🏦 {row['descricao']} — {row['status']} — Pendente: R$ {row['valor_pendente']:.2f}"):
+
+                st.write(f"**Valor Recebido:** R$ {row['valor_recebido']:.2f}")
+                st.write(f"**Valor a Pagar:** R$ {row['valor_a_pagar']:.2f}")
+                st.write(f"**Juros:** {row['juros']:.2f}%")
+                st.write(f"**Parcelas:** {int(row['parcelas'])}")
+                st.write(f"**Data:** {row['data']}")
+                st.write(f"**Observação:** {row['observacao'] or '-'}")
+
+                # ✅ REGISTRAR PAGAMENTO
+                with st.form(f"form_pag_{row['id_emprestimo']}"):
+                    valor_pago = st.number_input("Valor pago", min_value=0.0, step=50.0, key=f"vp_{row['id_emprestimo']}")
+                    data_pag = st.date_input("Data Pagamento", value=datetime.today(), key=f"dp_{row['id_emprestimo']}")
+                    registrar = st.form_submit_button("💰 Registrar Pagamento")
+
+                    if registrar and valor_pago > 0:
+                        novo_pagamento = {
+                            "id_emprestimo": row["id_emprestimo"],
+                            "descricao": row["descricao"],
+                            "valor_pago": float(valor_pago),
+                            "data_pagamento": str(data_pag),
+                        }
+                        try:
+                            inserir_um("pagamentos_emprestimos", novo_pagamento)
+                            st.success(f"✅ Pagamento de R$ {valor_pago:.2f} registrado com sucesso!")
+
+                            pagos = (
+                                carregar_dados("pagamentos_emprestimos", ["id_emprestimo", "valor_pago"])
+                                .query("id_emprestimo == @row.id_emprestimo")["valor_pago"]
+                                .sum()
+                            )
+                            pendente = max(0, float(row["valor_a_pagar"]) - pagos)
+                            status = "🟢 Quitado" if pendente <= 0 else "🟡 Pendente"
+
+                            atualizar_por_filtro(
+                                "emprestimos",
+                                {"valor_pendente": pendente, "status": status, "atualizado_em": str(datetime.now())},
+                                {"id_emprestimo": row["id_emprestimo"]},
+                            )
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Erro ao registrar pagamento: {e}")
+
+                # Histórico
+                hist = df_pag[df_pag["id_emprestimo"] == row["id_emprestimo"]]
+                if not hist.empty:
+                    st.write("📜 **Histórico de Pagamentos:**")
+                    for _, pg in hist.iterrows():
+                        st.markdown(f"- {pg['data_pagamento']}: R$ {pg['valor_pago']:.2f}")
+
+                # Excluir
+                if st.button("🗑️ Excluir Empréstimo", key=f"del_emp_{row['id_emprestimo']}"):
+                    deletar_por_filtro("emprestimos", {"id_emprestimo": row["id_emprestimo"]})
+                    deletar_por_filtro("pagamentos_emprestimos", {"id_emprestimo": row["id_emprestimo"]})
+                    st.warning(f"🗑️ Empréstimo '{row['descricao']}' excluído!")
+                    st.rerun()
+
 
 
 
