@@ -22,6 +22,17 @@ except Exception:
             return _
     st = _Dummy()  # type: ignore
 
+
+# === Corrige SSL local (rede corporativa) ===
+try:
+    import truststore
+    truststore.inject_into_ssl()
+except Exception:
+    pass
+# ============================================
+
+
+
 from supabase import create_client, Client
 
 # ====== CONFIG ======
@@ -209,8 +220,11 @@ def salvar_dados(df, nome_tabela: str):
         if tem_col("id"):
             conflict_key = "id"
     elif tabela == "emprestimos":
-        if tem_col("empid"):
+        if tem_col("id_emprestimo"):
+            conflict_key = "id_emprestimo"
+        elif tem_col("empid"):
             conflict_key = "empid"
+
     elif tabela == "pagamentos_emprestimos":
         if tem_col("pagid"):
             conflict_key = "pagid"
@@ -345,3 +359,48 @@ def _ensure_cols(df, cols, defaults=None):
     except TypeError:
         # fallback para chamadas antigas sem defaults
         return _ensure_columns(df, cols)
+    
+# ============================================================
+# Funções auxiliares do banco (Supabase) — sem duplicação
+# ============================================================
+
+def inserir_um(tabela_ou_csv: str, registro: dict):
+    """Insere uma única linha no Supabase."""
+    tabela = _tabela_from_nome_arquivo(tabela_ou_csv)
+    try:
+        sb().table(tabela).insert(registro).execute()
+        st.toast("✅ Registro inserido com sucesso.", icon="💾")
+    except Exception as e:
+        logging.exception(f"Erro em inserir_um({tabela})")
+        st.error(f"❌ Erro ao inserir em '{tabela}': {e}")
+        raise
+
+
+def atualizar_por_filtro(tabela_ou_csv: str, novos_dados: dict, filtro: dict):
+    """Atualiza registros conforme filtro (WHERE)."""
+    tabela = _tabela_from_nome_arquivo(tabela_ou_csv)
+    try:
+        query = sb().table(tabela).update(novos_dados)
+        for campo, valor in filtro.items():
+            query = query.eq(campo, valor)
+        query.execute()
+        st.toast("🔄 Registro atualizado!", icon="✅")
+    except Exception as e:
+        logging.exception(f"Erro em atualizar_por_filtro({tabela})")
+        st.error(f"❌ Erro ao atualizar '{tabela}': {e}")
+        raise
+
+
+def deletar_por_filtro(tabela_ou_csv: str, filtro: dict):
+    """Deleta registros conforme filtro (WHERE)."""
+    tabela = _tabela_from_nome_arquivo(tabela_ou_csv)
+    try:
+        query = sb().table(tabela).delete()
+        for campo, valor in filtro.items():
+            query = query.eq(campo, valor)
+        query.execute()
+        st.toast("🗑️ Registro excluído!", icon="✅")
+    except Exception as e:
+        logging.exception(f"Erro em deletar_por_filtro({tabela})")
+        st.error(f"❌ Erro ao excluir em '{tabela}': {e}")
+        raise
