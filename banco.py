@@ -1,14 +1,14 @@
-# banco.py — Camada de I/O no Supabase para o app TimTim Festas
+# banco.py — Camada de I/O no Supabase via REST (sem SDK)
 from __future__ import annotations
 
-import os
 import logging
-from typing import Optional, Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 import pandas as pd
 import re
 import requests
 
+# Usa streamlit se existir; senão, cria um "dummy" pra não quebrar em testes locais
 try:
     import streamlit as st
 except Exception:
@@ -19,58 +19,23 @@ except Exception:
             return _
     st = _Dummy()  # type: ignore
 
-from supabase import create_client, Client
-
-SUPABASE_URL_DEFAULT = "https://hmrqsjdlixeazdfhrqqh.supabase.co"
-SUPABASE_KEY_DEFAULT = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhtcnFzamRsaXhlYXpkZmhycXFoIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2MTIyMTcwNSwiZXhwIjoyMDc2Nzk3NzA1fQ.o4M5Ku9Glbg8gCMTFSNCDkgKedn4-ZJWKzeY7IAEKXA"
-
-# ===================================================
-# CLIENTE SUPABASE (sem verify, sem options)
-# ===================================================
-_SB: Optional[Client] = None
-
-def _get_supabase_client() -> Client:
-    """Cria o client do Supabase. Usa st.secrets, depois env vars, depois defaults."""
-    url = None
-    key = None
-
-    # 1) st.secrets
-    try:
-        if hasattr(st, "secrets") and "supabase" in st.secrets:
-            url = st.secrets["supabase"].get("url")
-            key = st.secrets["supabase"].get("key")
-    except Exception:
-        pass
-
-    # 2) Variáveis de ambiente
-    if not url:
-        url = os.getenv("SUPABASE_URL")
-    if not key:
-        key = os.getenv("SUPABASE_KEY")
-
-    # 3) Fallback
-    if not url:
-        url = SUPABASE_URL_DEFAULT
-    if not key:
-        key = SUPABASE_KEY_DEFAULT
-
-    # ⚠️ IMPORTANTE: NADA DE verify / options aqui
-    return create_client(url, key)
-
-def sb() -> Client:
-    global _SB
-    if _SB is None:
-        _SB = _get_supabase_client()
-    return _SB
-
-
-
+# Importa o wrapper REST que você criou
+from supabase_rest import (
+    table_select,
+    table_insert,
+    table_update,
+    table_delete,
+)
 
 # ===================================================
-# HELPERS
+# HELPERS DE NOME DE TABELA / CHUNKS
 # ===================================================
+
 def _tabela_from_nome_arquivo(nome: str) -> str:
-    """Converte 'reservas.csv' -> 'reservas'. Mantém nome se já vier sem .csv"""
+    """
+    Converte 'reservas.csv' -> 'reservas'.
+    Mantém o nome se já vier sem .csv.
+    """
     base = (nome or "").strip()
     if base.lower().endswith(".csv"):
         base = base[:-4]
@@ -80,13 +45,21 @@ def _tabela_from_nome_arquivo(nome: str) -> str:
 def _chunked(iterable: List[Dict[str, Any]], size: int = 500):
     """Gera blocos (chunks) para upload em lotes."""
     for i in range(0, len(iterable), size):
-        yield iterable[i:i+size]
+        yield iterable[i:i + size]
 
 
-def _ensure_columns(df: pd.DataFrame, colunas: Optional[List[str]], defaults: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
+# ===================================================
+# ENSURE COLUMNS (com defaults)
+# ===================================================
+
+def _ensure_columns(
+    df: pd.DataFrame,
+    colunas: Optional[List[str]],
+    defaults: Optional[Dict[str, Any]] = None
+) -> pd.DataFrame:
     """
     Garante colunas obrigatórias e aplica valores padrão se especificados.
-    Compatível com chamadas como _ensure_columns(df, cols, defaults={"valor":0.0})
+    Compatível com chamadas como _ensure_columns(df, cols, defaults={"valor": 0.0})
     """
     if defaults is None:
         defaults = {}
@@ -101,56 +74,57 @@ def _ensure_columns(df: pd.DataFrame, colunas: Optional[List[str]], defaults: Op
 
 
 # ===================================================
-# PRINCIPAIS FUNÇÕES DE I/O
+# PRINCIPAIS FUNÇÕES DE I/O (USANDO supabase_rest)
 # ===================================================
-def carregar_dados(nome_arquivo_ou_tabela: str, colunas: list[str]):
+
+def carregar_dados(nome_arquivo_ou_tabela: str, colunas: List[str]) -> pd.DataFrame:
     """
-    Lê dados de uma tabela do Supabase e retorna um DataFrame com as colunas especificadas.
-    Sempre retorna um DataFrame válido (mesmo que vazio).
+    Lê dados de uma tabela do Supabase via REST e retorna um DataFrame
+    com as colunas especificadas. Sempre retorna um DataFrame válido.
     """
     tabela = _tabela_from_nome_arquivo(nome_arquivo_ou_tabela)
     df = pd.DataFrame(columns=colunas)
 
     try:
-        response = sb().table(tabela).select("*").execute()
-
-        # Compatibilidade entre versões do SDK
-        data = None
-        if hasattr(response, "data"):
-            data = response.data
-        elif isinstance(response, dict) and "data" in response:
-            data = response["data"]
-        elif isinstance(response, dict) and "results" in response:
-            data = response["results"]
-
-        if data:
-            df = pd.DataFrame(data)
+        dados = table_select(tabela)  # SELECT * FROM tabela
+        if dados:
+            df = pd.DataFrame(dados)
         else:
             st.warning(f"⚠️ Nenhum dado retornado da tabela '{tabela}'.")
-
     except Exception as e:
+        logging.exception("Erro ao carregar dados da tabela %s", tabela)
         st.error(f"❌ Erro ao carregar dados da tabela '{tabela}': {e}")
 
     return _ensure_columns(df, colunas)
 
 
-# ===================================================
-# ✅ SALVAR DADOS (SEM DUPLICAR REGISTROS)
-# ===================================================
+def salvar_dados(arg1, arg2):
+    """
+    Salva um DataFrame no Supabase.
 
-# --- SUBSTITUA APENAS ESTA FUNÇÃO NO SEU banco.py ---
-def salvar_dados(df, nome_tabela: str):
+    Aceita as duas formas (pra compatibilidade com o seu app):
+      - salvar_dados(df, "tabela")
+      - salvar_dados("tabela", df)
+    A estratégia aqui é simples e robusta:
+      1) Normaliza datas e NaN
+      2) DELETE ALL na tabela
+      3) INSERT em blocos
     """
-    Salva o DataFrame no Supabase evitando duplicação.
-    Usa UPSERT quando encontra uma chave de conflito, senão faz
-    DELETE ALL + INSERT.
-    """
-    import pandas as pd
     from datetime import date, datetime
+
+    # Detecta o que é df e o que é nome da tabela
+    if isinstance(arg1, str):
+        nome_tabela = arg1
+        df = arg2
+    else:
+        df = arg1
+        nome_tabela = arg2
 
     if df is None or df.empty:
         print(f"⚠️ Nenhum dado para salvar na tabela '{nome_tabela}'.")
         return
+
+    tabela = _tabela_from_nome_arquivo(nome_tabela)
 
     # 1) Normaliza datas/NaN
     df = df.copy()
@@ -159,81 +133,59 @@ def salvar_dados(df, nome_tabela: str):
             df[col] = df[col].dt.strftime("%Y-%m-%d")
         elif df[col].dtype == "object":
             df[col] = df[col].apply(
-                lambda x: x.strftime("%Y-%m-%d") if isinstance(x, (date, datetime)) else x
+                lambda x: x.strftime("%Y-%m-%d")
+                if isinstance(x, (date, datetime))
+                else x
             )
     df = df.where(pd.notnull(df), None)
 
-    tabela = _tabela_from_nome_arquivo(nome_tabela).lower()
     registros = df.to_dict(orient="records")
 
-    # usa o client global (sb()), que já não tem verify
-    sup = sb()
-
-    # ===== escolha da conflict_key (seu código antigo aqui, só mantido) =====
-    lower_cols = [c.lower() for c in df.columns]
-
-    def tem_col(nome):
-        return nome in lower_cols and df[df.columns[lower_cols.index(nome)]].notnull().any()
-
-    conflict_key = None
-    if tabela == "reservas" and tem_col("id_cliente"):
-        conflict_key = "id_cliente"
-    elif tabela == "clientes":
-        if tem_col("id_cliente"):
-            conflict_key = "id_cliente"
-        elif tem_col("cpf"):
-            conflict_key = "cpf"
-        elif tem_col("nome"):
-            conflict_key = "nome"
-    elif tabela == "brinquedos":
-        if tem_col("id_brinquedo"):
-            conflict_key = "id_brinquedo"
-        elif tem_col("nome"):
-            conflict_key = "nome"
-    elif tabela == "custos":
-        if tem_col("id_custo"):
-            conflict_key = "id_custo"
-    elif tabela == "emprestimos":
-        if tem_col("id_emprestimo"):
-            conflict_key = "id_emprestimo"
-    elif tabela == "pagamentos_emprestimos":
-        if tem_col("id_pagamento"):
-            conflict_key = "id_pagamento"
-    # (demais tabelas continuam como estavam, se você tiver)
-
-    # 3) Tenta UPSERT se tiver conflict_key
-    if conflict_key:
-        try:
-            sup.table(tabela).upsert(registros, on_conflict=conflict_key).execute()
-            print(f"✅ UPSERT em '{tabela}' por '{conflict_key}': {len(registros)} linhas.")
-            return
-        except Exception as e:
-            print(f"⚠️ Falha no UPSERT por '{conflict_key}' em '{tabela}': {e}. Fallback para DELETE ALL + INSERT.")
-
-    # 4) Fallback: apaga tudo e insere de novo
     try:
-        sup.table(tabela).delete().neq("id", 0).execute()
+        # 2) Tenta apagar tudo antes (sem filtro = tabela inteira)
+        try:
+            table_delete(tabela, {})  # se a API bloquear, apenas não limpa
+        except Exception as e:
+            logging.warning(
+                "Não foi possível limpar a tabela '%s' antes de inserir: %s",
+                tabela,
+                e,
+            )
+
+        # 3) Insere em blocos
+        if registros:
+            for chunk in _chunked(registros, 500):
+                table_insert(tabela, chunk)
+
+        print(f"✅ Tabela '{tabela}' gravada com {len(registros)} linha(s).")
+
     except Exception as e:
-        print(f"⚠️ Não deu pra limpar '{tabela}' antes de inserir: {e} (vamos inserir mesmo assim).")
-
-    if registros:
-        sup.table(tabela).insert(registros).execute()
-    print(f"✅ Tabela '{tabela}' regravada: {len(registros)} linhas.")
-
-
+        logging.exception("Erro em salvar_dados(%s)", tabela)
+        st.error(f"❌ Erro ao salvar dados na tabela '{tabela}': {e}")
+        raise
 
 
 # ===================================================
-# FUNÇÕES AUXILIARES
+# FUNÇÕES AUXILIARES (INSERIR / ATUALIZAR / DELETAR)
 # ===================================================
+
+def inserir_um(tabela_ou_csv: str, registro: Dict[str, Any]) -> None:
+    """Insere uma única linha na tabela informada."""
+    tabela = _tabela_from_nome_arquivo(tabela_ou_csv)
+    try:
+        table_insert(tabela, [registro])
+        st.toast("✅ Registro inserido com sucesso.", icon="💾")
+    except Exception as e:
+        logging.exception("Erro em inserir_um(%s)", tabela)
+        st.error(f"❌ Erro ao inserir em '{tabela}': {e}")
+        raise
+
+
 def atualizar_um(tabela_ou_csv: str, filtro: Dict[str, Any], campos: Dict[str, Any]) -> None:
     """Atualiza registros que casam com 'filtro'."""
     tabela = _tabela_from_nome_arquivo(tabela_ou_csv)
     try:
-        q = sb().table(tabela).update(campos)
-        for k, v in filtro.items():
-            q = q.eq(k, v)
-        q.execute()
+        table_update(tabela, filtro, campos)
         st.toast("🔄 Atualizado!", icon="✅")
     except Exception as e:
         logging.exception("Erro em atualizar_um(%s)", tabela)
@@ -241,26 +193,11 @@ def atualizar_um(tabela_ou_csv: str, filtro: Dict[str, Any], campos: Dict[str, A
         raise
 
 
-def inserir_um(tabela_ou_csv: str, registro: Dict[str, Any]) -> None:
-    """Insere um único registro (dict)."""
-    tabela = _tabela_from_nome_arquivo(tabela_ou_csv)
-    try:
-        sb().table(tabela).insert(registro).execute()
-        st.toast("➕ Registro inserido.", icon="✅")
-    except Exception as e:
-        logging.exception("Erro em inserir_um(%s)", tabela)
-        st.error(f"❌ Erro ao inserir em '{tabela}': {e}")
-        raise
-
-
 def deletar_por_filtro(tabela_ou_csv: str, filtro: Dict[str, Any]) -> None:
     """Deleta registros que casem com o filtro informado."""
     tabela = _tabela_from_nome_arquivo(tabela_ou_csv)
     try:
-        q = sb().table(tabela).delete()
-        for k, v in filtro.items():
-            q = q.eq(k, v)
-        q.execute()
+        table_delete(tabela, filtro)
         st.toast("🗑️ Registro(s) excluído(s).", icon="✅")
     except Exception as e:
         logging.exception("Erro em deletar_por_filtro(%s)", tabela)
@@ -271,10 +208,11 @@ def deletar_por_filtro(tabela_ou_csv: str, filtro: Dict[str, Any]) -> None:
 # ===================================================
 # FUNÇÃO EXTRA — DISTÂNCIA ENTRE CEPs
 # ===================================================
+
 def calcular_distancia_km(cep_origem, cep_destino):
     """
-    Calcula a distância aproximada (em km) entre dois CEPs usando a API Nominatim (OpenStreetMap).
-    Retorna None se não for possível calcular.
+    Calcula a distância aproximada (em km) entre dois CEPs usando a API
+    Nominatim (OpenStreetMap). Retorna None se não for possível calcular.
     """
     try:
         cep_origem = re.sub(r"\D", "", str(cep_origem))
@@ -284,7 +222,10 @@ def calcular_distancia_km(cep_origem, cep_destino):
             return None
 
         def obter_coords(cep):
-            url = f"https://nominatim.openstreetmap.org/search?postalcode={cep}&country=Brazil&format=json"
+            url = (
+                "https://nominatim.openstreetmap.org/search"
+                f"?postalcode={cep}&country=Brazil&format=json"
+            )
             r = requests.get(url, headers={"User-Agent": "TimTimFestasApp"})
             if r.status_code == 200 and r.json():
                 dados = r.json()[0]
@@ -303,9 +244,11 @@ def calcular_distancia_km(cep_origem, cep_destino):
         print(f"Erro ao calcular distância: {e}")
         return None
 
+
 # ===================================================
 # ✅ COMPATIBILIDADE — Alias para função antiga
 # ===================================================
+
 def _ensure_cols(df, cols, defaults=None):
     """
     Compatibilidade com versões antigas do app.
@@ -316,48 +259,3 @@ def _ensure_cols(df, cols, defaults=None):
     except TypeError:
         # fallback para chamadas antigas sem defaults
         return _ensure_columns(df, cols)
-    
-# ============================================================
-# Funções auxiliares do banco (Supabase) — sem duplicação
-# ============================================================
-
-def inserir_um(tabela_ou_csv: str, registro: dict):
-    """Insere uma única linha no Supabase."""
-    tabela = _tabela_from_nome_arquivo(tabela_ou_csv)
-    try:
-        sb().table(tabela).insert(registro).execute()
-        st.toast("✅ Registro inserido com sucesso.", icon="💾")
-    except Exception as e:
-        logging.exception(f"Erro em inserir_um({tabela})")
-        st.error(f"❌ Erro ao inserir em '{tabela}': {e}")
-        raise
-
-
-def atualizar_por_filtro(tabela_ou_csv: str, novos_dados: dict, filtro: dict):
-    """Atualiza registros conforme filtro (WHERE)."""
-    tabela = _tabela_from_nome_arquivo(tabela_ou_csv)
-    try:
-        query = sb().table(tabela).update(novos_dados)
-        for campo, valor in filtro.items():
-            query = query.eq(campo, valor)
-        query.execute()
-        st.toast("🔄 Registro atualizado!", icon="✅")
-    except Exception as e:
-        logging.exception(f"Erro em atualizar_por_filtro({tabela})")
-        st.error(f"❌ Erro ao atualizar '{tabela}': {e}")
-        raise
-
-
-def deletar_por_filtro(tabela_ou_csv: str, filtro: dict):
-    """Deleta registros conforme filtro (WHERE)."""
-    tabela = _tabela_from_nome_arquivo(tabela_ou_csv)
-    try:
-        query = sb().table(tabela).delete()
-        for campo, valor in filtro.items():
-            query = query.eq(campo, valor)
-        query.execute()
-        st.toast("🗑️ Registro excluído!", icon="✅")
-    except Exception as e:
-        logging.exception(f"Erro em deletar_por_filtro({tabela})")
-        st.error(f"❌ Erro ao excluir em '{tabela}': {e}")
-        raise
