@@ -104,16 +104,6 @@ def salvar_dados(arg1, arg2):
     Salva um DataFrame no Supabase, convertendo tudo para JSON válido.
     Compatível com sua tabela atual.
     """
-print("=========== DEBUG ==========")
-for idx, reg in enumerate(registros):
-    try:
-        json.dumps(reg)   # tenta converter
-    except Exception as e:
-        print(f"❌ ERRO NA LINHA {idx}: {reg}")
-        print(f"Motivo: {e}")
-        raise
-print("=========== FIM DEBUG ==========")
-
 
     from datetime import date, datetime
 
