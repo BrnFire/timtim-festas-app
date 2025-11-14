@@ -129,7 +129,7 @@ def salvar_dados(df, nome_tabela):
 
     # Corrige ID
     if "id" in df.columns:
-        df["id"] = df["id"].astype("Int64")
+        df = df.drop(columns=["id"])
 
     registros = df.to_dict(orient="records")
 
