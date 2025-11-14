@@ -99,100 +99,59 @@ def carregar_dados(nome_arquivo_ou_tabela: str, colunas: List[str]) -> pd.DataFr
     return _ensure_columns(df, colunas)
 
 
-def salvar_dados(arg1, arg2):
+def salvar_dados(df, nome_tabela):
     """
-    Salva um DataFrame no Supabase.
-
-    Aceita:
-      - salvar_dados(df, "tabela")
-      - salvar_dados("tabela", df)
+    Salva um DataFrame no Supabase usando UPSERT linha a linha.
+    Não apaga a tabela inteira.
     """
 
     import json
     from datetime import date, datetime
 
-    # Detecta df x nome da tabela
-    if isinstance(arg1, df := None).__class__:  # ignore, só truque
-        pass  # mas não altera nada
-    if isinstance(arg1, str):
-        nome_tabela = arg1
-        df = arg2
-    else:
-        df = arg1
-        nome_tabela = arg2
-
-    if df is None or df.empty:
-        print(f"⚠️ Nenhum dado para salvar na tabela '{nome_tabela}'.")
-        return
-
     tabela = _tabela_from_nome_arquivo(nome_tabela)
 
-    # -------- 1) Normaliza datas --------
+    # --- Normalização ---
     df = df.copy()
 
+    # Datas → string
     for col in df.columns:
-        # datetime64 → YYYY-MM-DD
         if pd.api.types.is_datetime64_any_dtype(df[col]):
             df[col] = df[col].dt.strftime("%Y-%m-%d")
-
-        # objetos Python → converte datetime para str
-        elif df[col].dtype == "object":
+        elif df[col].dtype == object:
             df[col] = df[col].apply(
                 lambda x: x.strftime("%Y-%m-%d")
                 if isinstance(x, (date, datetime))
                 else x
             )
 
-    # -------- 2) Remove NaN (Supabase não aceita) --------
+    # Remove NaN → None
     df = df.where(pd.notnull(df), None)
 
-    # -------- 3) CORREÇÃO CRÍTICA: ID sempre inteiro --------
+    # Corrige ID
     if "id" in df.columns:
-        try:
-            df["id"] = df["id"].astype("Int64")    # remove .0
-        except:
-            df["id"] = df["id"].astype("string")   # fallback
+        df["id"] = df["id"].astype("Int64")
 
-    # -------- 4) Debug antes de salvar --------
-    print("\n=========== DEBUG DF BEFORE SAVE ==========")
-    print(df.dtypes)
-    print(df.head(10))
-    print("=========== END DEBUG ==========\n")
-
-    # -------- 5) DataFrame → registros JSON --------
     registros = df.to_dict(orient="records")
 
-    # -------- 6) Validação JSON registro a registro --------
-    print("\n=========== DEBUG JSON ==========")
-    for idx, reg in enumerate(registros):
+    # --- SALVA LINHA A LINHA ---
+    for reg in registros:
+        # Se o ID estiver vazio, PULA para não quebrar o Supabase
+        if "id" in reg and (reg["id"] is None):
+            print("⚠️ Linha ignorada por ID vazio:", reg)
+            continue
+
+        # Garantir JSON válido
+        json.dumps(reg)
+
+        # Upsert por linha
         try:
-            json.dumps(reg)
+            table_upsert(tabela, [reg])
         except Exception as e:
-            print(f"❌ ERRO NA LINHA {idx}: {reg}")
-            print(f"Motivo: {e}\n")
-            st.error(f"❌ Registro inválido na linha {idx}: {e}")
+            st.error(f"❌ Erro ao salvar registro {reg}: {e}")
             raise
-    print("=========== FIM DEBUG ==========\n")
 
-    # -------- 7) Envio para o Supabase --------
-    try:
-        # DELETE ALL — sem WHERE mesmo
-        try:
-            table_delete(tabela, {})
-        except Exception as e:
-            logging.warning("Não foi possível limpar a tabela '%s': %s", tabela, e)
+    print(f"✅ Tabela '{tabela}' salva com {len(registros)} registros.")
 
-        # INSERT/UPSERT em blocos
-        if registros:
-            for chunk in _chunked(registros, 500):
-                table_upsert(tabela, chunk)
-
-        print(f"✅ Tabela '{tabela}' gravada com {len(registros)} linha(s).")
-
-    except Exception as e:
-        logging.exception("Erro em salvar_dados(%s)", tabela)
-        st.error(f"❌ Erro ao salvar dados na tabela '{tabela}': {e}")
-        raise
 
 
 
