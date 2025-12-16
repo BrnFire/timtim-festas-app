@@ -950,7 +950,6 @@ def pagina_clientes():
                         except Exception as e:
                             st.error(f"❌ Erro ao excluir: {e}")
 
-
 # =========================================
 # MÓDULO PAGINA_RESERVAS SUPABASE
 # =========================================
@@ -976,7 +975,15 @@ from datetime import datetime, date, time as dtime
 import pandas as pd
 import streamlit as st
 
-from banco import carregar_dados, salvar_dados, calcular_distancia_km
+# ✅ ADICIONADO: inserir/update/delete por filtro (para não duplicar)
+from banco import (
+    carregar_dados,
+    salvar_dados,
+    calcular_distancia_km,
+    inserir_um,
+    atualizar_por_filtro,
+    deletar_por_filtro,
+)
 
 
 def _to_date_safe(x):
@@ -1054,6 +1061,10 @@ def pagina_reservas():
     for c in num_cols:
         reservas[c] = pd.to_numeric(reservas[c], errors="coerce").fillna(0.0)
     brinquedos["valor"] = pd.to_numeric(brinquedos["valor"], errors="coerce").fillna(0.0)
+
+    # ✅ Garante id numérico quando vier como texto/float
+    if "id" in reservas.columns:
+        reservas["id"] = pd.to_numeric(reservas["id"], errors="coerce")
 
     # ========================================
     # CLASSIFICAÇÃO DE RESERVAS
@@ -1142,25 +1153,45 @@ def pagina_reservas():
                 # Observação
                 nova_obs = st.text_area("📝 Atualizar observação", value=str(row.get("observacao","")), key=f"obs_{tipo}_{i}")
                 if st.button("💾 Salvar observação", key=f"btn_obs_{tipo}_{i}"):
-                    reservas.at[i, "observacao"] = nova_obs
-                    salvar_dados(reservas, "reservas")
-                    st.success("📝 Observação salva com sucesso!")
-                    st.balloons()
-                    st.rerun()
+                    try:
+                        rid = row.get("id")
+                        if pd.isna(rid):
+                            st.error("❌ Esta reserva não tem ID. Não dá para atualizar sem duplicar.")
+                        else:
+                            atualizar_por_filtro("reservas", {"observacao": nova_obs}, {"id": int(rid)})
+                            st.success("📝 Observação salva com sucesso!")
+                            st.balloons()
+                            st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Erro ao salvar observação: {e}")
 
                 # Pagamento parcial
                 valor_parcial = st.number_input("Registrar pagamento (R$)", min_value=0.0, step=10.0, key=f"pag_{tipo}_{i}")
                 if st.button("💰 Confirmar pagamento", key=f"btn_pag_{tipo}_{i}"):
                     if valor_parcial > 0:
-                        reservas.at[i, "sinal"] = float(reservas.at[i, "sinal"]) + float(valor_parcial)
-                        reservas.at[i, "falta"] = max(float(reservas.at[i, "valor_total"]) - float(reservas.at[i, "sinal"]), 0.0)
-                        reservas.at[i, "status"] = "Concluído" if float(reservas.at[i, "falta"]) == 0 else "Pendente"
-                        salvar_dados(reservas, "reservas")
-                        st.success(f"💰 Pagamento de R$ {valor_parcial:,.2f} registrado!")
-                        st.balloons()
-                        st.rerun()
+                        try:
+                            rid = row.get("id")
+                            if pd.isna(rid):
+                                st.error("❌ Esta reserva não tem ID. Não dá para atualizar sem duplicar.")
+                            else:
+                                sinal_novo = float(row.get("sinal", 0.0)) + float(valor_parcial)
+                                valor_total_row = float(row.get("valor_total", 0.0))
+                                falta_nova = max(valor_total_row - sinal_novo, 0.0)
+                                status_novo = "Concluído" if falta_nova == 0 else "Pendente"
 
-                                # Editar / Excluir
+                                atualizar_por_filtro(
+                                    "reservas",
+                                    {"sinal": sinal_novo, "falta": falta_nova, "status": status_novo},
+                                    {"id": int(rid)}
+                                )
+
+                                st.success(f"💰 Pagamento de R$ {valor_parcial:,.2f} registrado!")
+                                st.balloons()
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Erro ao registrar pagamento: {e}")
+
+                # Editar / Excluir
                 if st.button("✏️ Editar reserva", key=f"edit_{tipo}_{i}"):
                     st.session_state.editando = int(i)
                     st.rerun()
@@ -1180,7 +1211,7 @@ def pagina_reservas():
                     try:
                         # Excluir usando o ID, se existir
                         if "id" in reservas.columns and pd.notna(row.get("id")):
-                            deletar_por_filtro("reservas", {"id": row["id"]})
+                            deletar_por_filtro("reservas", {"id": int(row["id"])})
                         else:
                             # Fallback: excluir pelo trio cliente + brinquedos + data
                             deletar_por_filtro(
@@ -1197,9 +1228,6 @@ def pagina_reservas():
 
                     except Exception as e:
                         st.error(f"❌ Erro ao excluir reserva: {e}")
-
-
-
 
                 st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1373,17 +1401,26 @@ def pagina_reservas():
                     "status": "Concluído" if max(valor_total - float(sinal), 0.0) == 0 else "Pendente",
                     "pagamentos": str(reserva.get("pagamentos",""))
                 }
-                if idx_edit is not None and idx_edit in reservas.index:
-                    reservas.loc[idx_edit] = nova
-                    st.session_state.editando = None
-                    st.success("✅ Reserva atualizada com sucesso!")
-                else:
-                    reservas.loc[len(reservas)] = nova
-                    st.success("✅ Reserva criada com sucesso!")
 
-                salvar_dados(reservas, "reservas")
+                # ✅ AQUI É O QUE RESOLVE A DUPLICIDADE:
+                # - se está editando: UPDATE por id
+                # - se é nova: INSERT (sem mandar id)
+                try:
+                    if idx_edit is not None and idx_edit in reservas.index and pd.notna(reserva.get("id")):
+                        rid = int(reserva["id"])
+                        atualizar_por_filtro("reservas", nova, {"id": rid})
+                        st.session_state.editando = None
+                        st.success("✅ Reserva atualizada com sucesso!")
+                    else:
+                        inserir_um("reservas", nova)
+                        st.success("✅ Reserva criada com sucesso!")
+                except Exception as e:
+                    st.error(f"❌ Erro ao salvar reserva: {e}")
+                    return
+
                 time.sleep(1)
                 st.rerun()
+
 
 
 
@@ -3404,6 +3441,7 @@ else:
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
 
