@@ -9,8 +9,21 @@ from dateutil import parser
 from banco import carregar_dados, salvar_dados
 from banco import _ensure_cols
 
+# ========================================
+# tESTE
+# ========================================
+import streamlit as st
 
+try:
+    from docx import Document
+    st.success("python-docx carregado com sucesso ✅")
+except Exception as e:
+    st.error(f"Erro ao importar python-docx: {e}")
+    st.stop()
 
+# ========================================
+# tESTE
+# ========================================
 
 # ========================================
 # CONFIGURAÇÃO INICIAL
@@ -3575,6 +3588,7 @@ else:
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
 
