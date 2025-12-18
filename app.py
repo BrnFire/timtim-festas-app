@@ -3278,6 +3278,321 @@ def pagina_funcionarios():
                             st.session_state.func_excluir_idx = abs_idx
                             st.rerun()
 
+# ========================================
+# PAGINA CONTRATO INICIO
+# ========================================
+
+import os
+import re
+import time
+from datetime import datetime, date
+
+import pandas as pd
+import streamlit as st
+
+from docx import Document
+
+# usa seu banco.py atual (REST)
+from banco import carregar_dados
+
+
+# =========================
+# Helpers
+# =========================
+def _to_date_safe(x):
+    """Converte em date ou None."""
+    try:
+        if pd.isna(x) or str(x).strip() == "":
+            return None
+        if isinstance(x, (pd.Timestamp, datetime, date)):
+            return pd.to_datetime(x).date()
+        s = str(x).strip().split(" ")[0]
+        # tenta formatos comuns
+        for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%d/%m/%y"):
+            try:
+                return datetime.strptime(s, fmt).date()
+            except ValueError:
+                continue
+        d = pd.to_datetime(s, dayfirst=True, errors="coerce")
+        if pd.isna(d):
+            return None
+        return d.date()
+    except Exception:
+        return None
+
+
+def _fmt_data_br(d: date | None) -> str:
+    if not d:
+        return ""
+    return d.strftime("%d/%m/%Y")
+
+
+def _limpar_num(s: str) -> str:
+    return re.sub(r"\D", "", str(s or ""))
+
+
+def _fmt_fone(telefone: str) -> str:
+    t = _limpar_num(telefone)
+    if len(t) == 11:
+        return f"({t[:2]}) {t[2:7]}-{t[7:]}"
+    if len(t) == 10:
+        return f"({t[:2]}) {t[2:6]}-{t[6:]}"
+    return str(telefone or "")
+
+
+def _replace_in_paragraph(paragraph, mapping: dict[str, str]) -> None:
+    """
+    Substitui placeholders mesmo quando o Word quebra o texto em vários runs.
+    Estratégia: junta o texto, faz replace, e reescreve no primeiro run.
+    """
+    full_text = "".join(run.text for run in paragraph.runs)
+    new_text = full_text
+    for k, v in mapping.items():
+        new_text = new_text.replace(k, str(v))
+
+    if new_text != full_text:
+        # limpa runs
+        for run in paragraph.runs:
+            run.text = ""
+        # escreve tudo no primeiro run (ou cria um)
+        if paragraph.runs:
+            paragraph.runs[0].text = new_text
+        else:
+            paragraph.add_run(new_text)
+
+
+def _replace_in_table(table, mapping: dict[str, str]) -> None:
+    for row in table.rows:
+        for cell in row.cells:
+            for p in cell.paragraphs:
+                _replace_in_paragraph(p, mapping)
+
+
+def preencher_docx(template_path: str, out_docx_path: str, mapping: dict[str, str]) -> None:
+    doc = Document(template_path)
+
+    # parágrafos
+    for p in doc.paragraphs:
+        _replace_in_paragraph(p, mapping)
+
+    # tabelas
+    for t in doc.tables:
+        _replace_in_table(t, mapping)
+
+    doc.save(out_docx_path)
+
+
+def docx_to_pdf(docx_path: str, pdf_path: str) -> bool:
+    """
+    Tenta converter DOCX -> PDF.
+    - Windows: docx2pdf
+    - Linux (Streamlit Cloud): LibreOffice (se existir)
+    Retorna True se gerar PDF.
+    """
+    # 1) Windows: docx2pdf
+    try:
+        from docx2pdf import convert
+        convert(docx_path, pdf_path)
+        return os.path.exists(pdf_path)
+    except Exception:
+        pass
+
+    # 2) Linux: libreoffice (se estiver disponível)
+    try:
+        import subprocess
+        out_dir = os.path.dirname(os.path.abspath(pdf_path))
+        subprocess.run(
+            ["libreoffice", "--headless", "--convert-to", "pdf", docx_path, "--outdir", out_dir],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        # libreoffice gera com mesmo nome base
+        base = os.path.splitext(os.path.basename(docx_path))[0] + ".pdf"
+        generated = os.path.join(out_dir, base)
+        if os.path.exists(generated):
+            # renomeia pro nome desejado
+            if generated != pdf_path:
+                try:
+                    os.replace(generated, pdf_path)
+                except Exception:
+                    pass
+            return os.path.exists(pdf_path)
+    except Exception:
+        pass
+
+    return False
+
+
+# =========================
+# Página / Módulo
+# =========================
+def pagina_contratos():
+    st.header("📄 Contratos (automático pelo Supabase)")
+
+    # ajuste o caminho do seu template
+    template_path = st.text_input(
+        "Caminho do template DOCX",
+        value="Contrato de Locação Mariana 28-02.docx"
+    )
+
+    # colunas das tabelas (conforme seu app)
+    col_clientes = [
+        "nome", "telefone", "email", "tipo_cliente", "cpf", "cnpj",
+        "como_conseguiu", "logradouro", "numero", "complemento",
+        "bairro", "cidade", "cep", "observacao"
+    ]
+    col_reservas = [
+        "id",
+        "cliente", "brinquedos", "data", "horario_entrega", "horario_retirada",
+        "inicio_festa", "fim_festa",
+        "valor_total", "valor_extra", "frete", "desconto",
+        "sinal", "falta", "observacao", "status", "pagamentos"
+    ]
+
+    # carrega dados
+    clientes = carregar_dados("clientes", col_clientes)
+    reservas = carregar_dados("reservas", col_reservas)
+
+    clientes.columns = [c.lower().strip() for c in clientes.columns]
+    reservas.columns = [c.lower().strip() for c in reservas.columns]
+
+    # normaliza tipos
+    reservas["data"] = reservas["data"].apply(_to_date_safe)
+    for c in ["valor_total", "valor_extra", "frete", "desconto", "sinal", "falta"]:
+        if c in reservas.columns:
+            reservas[c] = pd.to_numeric(reservas[c], errors="coerce").fillna(0.0)
+
+    if reservas.empty:
+        st.warning("Nenhuma reserva encontrada.")
+        return
+
+    # escolhe reserva por ID (sua coluna é 'id' int8)
+    reservas = reservas.sort_values(by=["data", "id"], ascending=[False, False], na_position="last").reset_index(drop=True)
+
+    opcoes = []
+    for _, r in reservas.iterrows():
+        rid = r.get("id", "")
+        cli = r.get("cliente", "")
+        d = _fmt_data_br(r.get("data"))
+        opcoes.append(f"#{rid} — {cli} — {d}")
+
+    idx = st.selectbox("Selecione a reserva para gerar contrato", range(len(opcoes)), format_func=lambda i: opcoes[i])
+    r = reservas.loc[idx].to_dict()
+
+    # acha cliente pelo nome (como seu relacionamento hoje está por texto)
+    nome_cliente = str(r.get("cliente", "")).strip()
+    cli_row = None
+    if not clientes.empty and "nome" in clientes.columns:
+        match = clientes[clientes["nome"].astype(str).str.strip() == nome_cliente]
+        if not match.empty:
+            cli_row = match.iloc[0].to_dict()
+
+    if not cli_row:
+        st.error("Não encontrei esse cliente na tabela 'clientes' (pelo campo nome).")
+        st.stop()
+
+    # brinquedos locados no formato pedido
+    brinquedos_lista = [b.strip() for b in str(r.get("brinquedos", "")).split(",") if b.strip()]
+    brinquedos_txt = ", ".join(brinquedos_lista)  # ✅ formato: "Cama elástica, Piscina..."
+
+    # exemplo de endereço formatado
+    endereco = f"{cli_row.get('logradouro','')}, {cli_row.get('numero','')}"
+    if cli_row.get("complemento"):
+        endereco += f" - {cli_row.get('complemento')}"
+    endereco += f" - {cli_row.get('bairro','')}, {cli_row.get('cidade','')}"
+    if cli_row.get("cep"):
+        endereco += f" - CEP {cli_row.get('cep','')}"
+
+    # ✅ MAPPING (ajuste os placeholders exatamente como estão no seu Word)
+    # Recomendo você colocar no Word placeholders tipo {{NOME_CLIENTE}} etc.
+    mapping = {
+        "{{NOME_CLIENTE}}": str(cli_row.get("nome", "")),
+        "{{TELEFONE}}": _fmt_fone(cli_row.get("telefone", "")),
+        "{{EMAIL}}": str(cli_row.get("email", "")),
+        "{{CPF}}": str(cli_row.get("cpf", "")),
+        "{{CNPJ}}": str(cli_row.get("cnpj", "")),
+        "{{ENDERECO}}": endereco,
+
+        "{{DATA_RESERVA}}": _fmt_data_br(r.get("data")),
+        "{{HORARIO_ENTREGA}}": str(r.get("horario_entrega", "")),
+        "{{HORARIO_RETIRADA}}": str(r.get("horario_retirada", "")),
+        "{{INICIO_FESTA}}": str(r.get("inicio_festa", "")),
+        "{{FIM_FESTA}}": str(r.get("fim_festa", "")),
+
+        "{{VALOR_TOTAL}}": f"{float(r.get('valor_total', 0.0)):.2f}",
+        "{{FRETE}}": f"{float(r.get('frete', 0.0)):.2f}",
+        "{{DESCONTO}}": f"{float(r.get('desconto', 0.0)):.2f}",
+        "{{SINAL}}": f"{float(r.get('sinal', 0.0)):.2f}",
+        "{{FALTA}}": f"{float(r.get('falta', 0.0)):.2f}",
+
+        # ✅ CAMPO NOVO NO TEMPLATE:
+        # No Word, coloque: "Brinquedos Locados: {{BRINQUEDOS_LOCADOS}}"
+        "{{BRINQUEDOS_LOCADOS}}": brinquedos_txt,
+    }
+
+    st.divider()
+    st.subheader("Prévia rápida")
+    st.write(f"**Cliente:** {nome_cliente}")
+    st.write(f"**Data:** {_fmt_data_br(r.get('data'))}")
+    st.write(f"**Brinquedos Locados:** {brinquedos_txt}")
+
+    st.divider()
+
+    colA, colB = st.columns(2)
+    with colA:
+        gerar_docx = st.button("📝 Gerar DOCX")
+    with colB:
+        gerar_pdf = st.button("📄 Gerar PDF (opção 2)")
+
+    # pasta de saída
+    out_dir = "contratos_gerados"
+    os.makedirs(out_dir, exist_ok=True)
+
+    rid = r.get("id", "sem_id")
+    safe_cliente = re.sub(r"[^a-zA-Z0-9_-]+", "_", nome_cliente)[:60]
+    base_name = f"Contrato_{safe_cliente}_ID{rid}"
+
+    out_docx = os.path.join(out_dir, base_name + ".docx")
+    out_pdf = os.path.join(out_dir, base_name + ".pdf")
+
+    if gerar_docx or gerar_pdf:
+        if not os.path.exists(template_path):
+            st.error("Template DOCX não encontrado nesse caminho.")
+            st.stop()
+
+        try:
+            preencher_docx(template_path, out_docx, mapping)
+            st.success("✅ DOCX gerado com sucesso!")
+
+            with open(out_docx, "rb") as f:
+                st.download_button(
+                    "⬇️ Baixar DOCX",
+                    data=f,
+                    file_name=os.path.basename(out_docx),
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+
+            if gerar_pdf:
+                ok = docx_to_pdf(out_docx, out_pdf)
+                if ok:
+                    st.success("✅ PDF gerado com sucesso!")
+                    with open(out_pdf, "rb") as f:
+                        st.download_button(
+                            "⬇️ Baixar PDF",
+                            data=f,
+                            file_name=os.path.basename(out_pdf),
+                            mime="application/pdf",
+                        )
+                else:
+                    st.warning("⚠️ Não consegui converter para PDF nesse ambiente. O DOCX já foi gerado.")
+        except Exception as e:
+            st.error(f"❌ Erro ao gerar contrato: {e}")
+
+
+# ========================================
+# PAGINA CONTRATO FIM
+# ========================================
 
 # ========================================
 # PROGRAMA PRINCIPAL
@@ -3362,6 +3677,7 @@ else:
             "Frota": ("🚗 Frota", "frota"),
             "Funcionários": ("👷 Funcionários", "funcionarios"),
             "Envio WhatsApp": ("📲 Suporte", "envio_whatsapp"),
+            "Gerar Contratos": ("📲 Gerar Contratos", "pagina_contratos"),
             "Sair": ("🚪 Sair", "sair")
     }
 
@@ -3437,10 +3753,13 @@ else:
     elif menu == "Funcionários":
         pagina_funcionarios()
     elif menu == "Envio WhatsApp":
-        pagina_whatsapp()      
+        pagina_whatsapp()
+    elif menu == "Gerar Contrato":
+        pagina_contratos() 
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
 
