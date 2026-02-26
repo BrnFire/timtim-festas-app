@@ -289,7 +289,7 @@ def pagina_relatorios():
     cards = [
         ("💰 Total Realizado", f"R$ {total_realizado:,.2f}", "#2ECC71"),
         ("📉 Custos Totais", f"R$ {custo_total:,.2f}", "#E74C3C"),
-        ("📊 Lucro Líquido", f"R$ {liquido_total:,.2f}", "#0078D7"),
+        ("📊 Lucro Bruto", f"R$ {liquido_total:,.2f}", "#0078D7"),
         ("🎟️ Reservas", total_reservas, "#F1C40F"),
         ("📈 ROI Médio", f"{roi_medio:.1f}%", "#9B59B6"),
     ]
@@ -3572,6 +3572,7 @@ else:
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
 
