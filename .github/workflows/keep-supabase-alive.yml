@@ -1,0 +1,27 @@
+name: Keep Services Alive (Supabase & App)
+
+on:
+  schedule:
+    # Executa diariamente às 05:00 no horário de Brasília (UTC-3 => 08:00 UTC)
+    - cron: "0 8 * * *"
+  workflow_dispatch: # permite rodar manualmente pelo botão "Run workflow"
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase REST root
+        run: |
+          curl -s -I "https://${{ secrets.SUPABASE_PROJECT_ID }}.supabase.co/rest/v1/"
+
+      - name: Ping tabela 'brinquedos' (REST)
+        run: |
+          curl -s "https://${{ secrets.SUPABASE_PROJECT_ID }}.supabase.co/rest/v1/brinquedos?select=id&limit=1" \
+            -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}"
+
+      - name: Ping Streamlit app (opcional)
+        run: |
+          if [ -n "${{ secrets.APP_URL }}" ]; then
+            curl -s -I "${{ secrets.APP_URL }}"
+          fi
