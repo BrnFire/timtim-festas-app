@@ -2,26 +2,59 @@ name: Keep Services Alive (Supabase & App)
 
 on:
   schedule:
-    # Executa diariamente às 05:00 no horário de Brasília (UTC-3 => 08:00 UTC)
+    # Executa diariamente às 05:00 BRT (UTC-3 => 08:00 UTC)
     - cron: "0 8 * * *"
-  workflow_dispatch: # permite rodar manualmente pelo botão "Run workflow"
+  workflow_dispatch:
 
 jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping Supabase REST root
+      - name: Preparar PROJECT_ID normalizado
+        id: prep
+        shell: bash
         run: |
-          curl -s -I "https://${{ secrets.SUPABASE_PROJECT_ID }}.supabase.co/rest/v1/"
+          # Lê o secret e remove espaços/quebras
+          PROJECT="${{ secrets.SUPABASE_PROJECT_ID }}"
+          PROJECT="$(echo -n "$PROJECT" | tr -d '\r' | tr -d '\n' | xargs)"
+
+          # Remove prefixo "https://" se existir
+          PROJECT="${PROJECT#https://}"
+          PROJECT="${PROJECT#http://}"
+
+          # Remove sufixo ".supabase.co" se existir
+          PROJECT="${PROJECT%.supabase.co}"
+
+          # Corta qualquer coisa após primeira "/" (se colaram "subdominio.supabase.co/rest...")
+          PROJECT="${PROJECT%%/*}"
+
+          if [ -z "$PROJECT" ]; then
+            echo "Project ID vazio após normalização."
+            exit 1
+          fi
+
+          echo "project_id=$PROJECT" >> "$GITHUB_OUTPUT"
+
+      - name: Ping Supabase REST root
+        shell: bash
+        run: |
+          BASE="https://${{ steps.prep.outputs.project_id }}.supabase.co"
+          echo "Pinging: $BASE/rest/v1/"
+          # --fail: retorna erro se HTTP >= 400; -sS: silencioso mas mostra erros; -I: HEAD
+          curl --fail -sS -I "$BASE/rest/v1/"
 
       - name: Ping tabela 'brinquedos' (REST)
+        shell: bash
         run: |
-          curl -s "https://${{ secrets.SUPABASE_PROJECT_ID }}.supabase.co/rest/v1/brinquedos?select=id&limit=1" \
+          BASE="https://${{ steps.prep.outputs.project_id }}.supabase.co"
+          echo "GET: $BASE/rest/v1/brinquedos?select=id&limit=1"
+          curl --fail -sS "$BASE/rest/v1/brinquedos?select=id&limit=1" \
             -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" \
             -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}"
 
       - name: Ping Streamlit app (opcional)
+        if: ${{ secrets.APP_URL != '' }}
+        shell: bash
         run: |
-          if [ -n "${{ secrets.APP_URL }}" ]; then
-            curl -s -I "${{ secrets.APP_URL }}"
-          fi
+          echo "HEAD: ${{ secrets.APP_URL }}"
+          curl --fail -sS -I "${{ secrets.APP_URL }}"
