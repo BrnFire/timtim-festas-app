@@ -2924,49 +2924,43 @@ def pagina_pre_reservas():
         st.success("🎉 Nenhuma pré-reserva pendente!")
         return
 
-    for idx, row in pre_pendentes.iterrows():
+   for idx, row in pre_pendentes.iterrows():
 
-        with st.container():
-            st.subheader(f"👤 {row['nome']}")
-            st.write(f"📅 Data: {row['data']}")
-            st.write(f"⏰ {row['hora_inicio']} - {row['hora_fim']}")
-            st.write(f"🎠 Brinquedos: {row['brinquedos']}")
-            st.write(f"📞 Telefone: {row['telefone']}")
+    with st.container():
+        st.subheader(f"👤 {row['nome']}")
 
-            col1, col2 = st.columns(2)
+        # 🔥 MOSTRAR TODOS OS CAMPOS DA LINHA
+        for coluna, valor in row.items():
+            if pd.notna(valor) and coluna != "id":
+                st.write(f"**{coluna.replace('_',' ').title()}**: {valor}")
 
-            # ✅ APROVAR
-            if col1.button("✅ Aprovar", key=f"aprovar_{row['id']}"):
+        col1, col2 = st.columns(2)
 
-                nova_reserva = {
-                    "id": row["id"],
-                    "cliente": row["nome"],
-                    "telefone": row["telefone"],
-                    "data": row["data"],
-                    "hora_inicio": row["hora_inicio"],
-                    "hora_fim": row["hora_fim"],
-                    "brinquedos": row["brinquedos"],
-                }
+        # ✅ APROVAR
+        if col1.button("✅ Aprovar", key=f"aprovar_{row['id']}"):
 
-                reservas.loc[len(reservas)] = nova_reserva
-                salvar_dados(reservas, "reservas")
+            nova_reserva = row.to_dict()
+            nova_reserva.pop("status", None)
 
-                pre.at[idx, "status"] = "Aprovada"
-                salvar_dados(pre, "pre_reservas")
+            reservas.loc[len(reservas)] = nova_reserva
+            salvar_dados(reservas, "reservas")
 
-                st.success("Reserva aprovada com sucesso!")
-                st.rerun()
+            pre.at[idx, "status"] = "Aprovada"
+            salvar_dados(pre, "pre_reservas")
 
-            # ❌ RECUSAR
-            if col2.button("❌ Recusar", key=f"recusar_{row['id']}"):
+            st.success("Reserva aprovada com sucesso!")
+            st.rerun()
 
-                pre.at[idx, "status"] = "Recusada"
-                salvar_dados(pre, "pre_reservas")
+        # ❌ RECUSAR
+        if col2.button("❌ Recusar", key=f"recusar_{row['id']}"):
 
-                st.warning("Pré-reserva recusada.")
-                st.rerun()
+            pre.at[idx, "status"] = "Recusada"
+            salvar_dados(pre, "pre_reservas")
 
-            st.divider()
+            st.warning("Pré-reserva recusada.")
+            st.rerun()
+
+        st.divider()
 
 # ======================================
 # PÁGINA: Funcionários (Supabase)
@@ -3651,6 +3645,7 @@ else:
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
 
