@@ -2900,38 +2900,47 @@ import pandas as pd
 import streamlit as st
 import urllib.parse
 
+
 def pagina_pre_reservas():
 
     st.header("📊 Aprovação de Pré-Reservas")
 
-    # 🔥 Carrega todas as colunas automaticamente
-    pre = carregar_dados("pre_reservas", "*")
-    reservas = carregar_dados("reservas", "*")
-
-    if pre.empty:
+    # 🔥 Carrega dados sem quebrar
+    pre = carregar_dados("pre_reservas", [])
+    if pre is None or pre.empty:
         st.info("⚠️ Nenhuma pré-reserva encontrada.")
         return
 
+    reservas = carregar_dados("reservas", [])
+    if reservas is None:
+        reservas = pd.DataFrame()
+
+    # 🔥 Garante que coluna status existe
     if "status" not in pre.columns:
         st.error("❌ A coluna 'status' não existe na tabela pre_reservas.")
         return
 
+    # 🔥 Filtra pendentes
     pre_pendentes = pre[pre["status"] == "Pendente"]
 
     if pre_pendentes.empty:
         st.success("🎉 Nenhuma pré-reserva pendente!")
         return
 
-    # 🔥 Loop pelas pendentes
+    # ======================================
+    # LOOP DAS PRÉ-RESERVAS
+    # ======================================
+
     for idx, row in pre_pendentes.iterrows():
 
         with st.container():
 
-            st.subheader(f"👤 {row.get('nome', 'Sem Nome')}")
+            nome_cliente = row.get("nome", "Sem Nome")
+            st.subheader(f"👤 {nome_cliente}")
 
             st.markdown("### 📋 Informações da Pré-Reserva")
 
-            # 🔥 Mostra TODOS os campos automaticamente
+            # 🔥 Mostra todas as colunas automaticamente
             for coluna, valor in row.items():
                 if pd.notna(valor) and coluna != "id":
                     nome_formatado = coluna.replace("_", " ").title()
@@ -2947,23 +2956,41 @@ def pagina_pre_reservas():
             if col1.button("✅ Aprovar", key=f"aprovar_{row['id']}"):
 
                 nova_reserva = row.to_dict()
-                nova_reserva.pop("status", None)
+
+                # Remove status antes de inserir
+                if "status" in nova_reserva:
+                    del nova_reserva["status"]
 
                 # Adiciona na tabela reservas
-                reservas.loc[len(reservas)] = nova_reserva
+                reservas = pd.concat(
+                    [reservas, pd.DataFrame([nova_reserva])],
+                    ignore_index=True
+                )
+
                 salvar_dados(reservas, "reservas")
 
-                # Atualiza status
+                # Atualiza status para Aprovada
                 pre.at[idx, "status"] = "Aprovada"
                 salvar_dados(pre, "pre_reservas")
 
                 st.success("🎉 Reserva aprovada com sucesso!")
 
-                # 🔥 Gerar link WhatsApp automático
-                telefone = str(row.get("telefone", "")).replace("(", "").replace(")", "").replace("-", "").replace(" ", "")
+                # ======================================
+                # 📲 GERAR LINK WHATSAPP
+                # ======================================
+
+                telefone = str(row.get("telefone", ""))
+
+                # limpa formatação
+                telefone = (
+                    telefone.replace("(", "")
+                    .replace(")", "")
+                    .replace("-", "")
+                    .replace(" ", "")
+                )
 
                 mensagem = f"""
-Olá {row.get('nome','')} 👋
+Olá {nome_cliente} 👋
 
 Sua reserva para o dia {row.get('data','')} foi aprovada 🎉
 
@@ -3676,6 +3703,7 @@ else:
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
 
