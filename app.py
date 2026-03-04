@@ -2907,6 +2907,7 @@ def pagina_pre_reservas():
 
     # 🔥 Carrega dados sem quebrar
     pre = carregar_dados("pre_reservas", [])
+    st.write("DEBUG pre:", pre)
     if pre is None or pre.empty:
         st.info("⚠️ Nenhuma pré-reserva encontrada.")
         return
@@ -3703,6 +3704,7 @@ else:
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
 
