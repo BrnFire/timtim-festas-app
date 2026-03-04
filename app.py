@@ -2891,6 +2891,7 @@ def salvar_foto_imediato(foto_bytes: bytes, nome_hint: str, ext: str = ".jpg") -
     rel = destino.relative_to(Path(__file__).parent if "__file__" in globals() else Path.cwd())
     return rel.as_posix()
 
+
 # ======================================
 # PÁGINA: PRÉ-RESERVAS
 # ======================================
@@ -2899,8 +2900,13 @@ from banco import carregar_dados, salvar_dados
 import pandas as pd
 import streamlit as st
 
+
 def pagina_pre_reservas():
     st.header("📊 Aprovação de Pré-Reservas")
+
+    # ==============================
+    # CARREGAR DADOS
+    # ==============================
 
     pre = carregar_dados(
         "pre_reservas",
@@ -2930,13 +2936,23 @@ def pagina_pre_reservas():
     reservas = carregar_dados(
         "reservas",
         [
-            "id",
             "cliente",
-            "telefone",
+            "brinquedos",
             "data",
-            "hora_inicio",
-            "hora_fim",
-            "brinquedos"
+            "horario_entrega",
+            "horario_retirada",
+            "inicio_festa",
+            "fim_festa",
+            "valor_total",
+            "valor_extra",
+            "frete",
+            "desconto",
+            "sinal",
+            "falta",
+            "observacao",
+            "status",
+            "pagamentos",
+            "id"
         ]
     )
 
@@ -2950,6 +2966,10 @@ def pagina_pre_reservas():
         st.success("🎉 Nenhuma pré-reserva pendente!")
         return
 
+    # ==============================
+    # LOOP DAS PRÉ-RESERVAS
+    # ==============================
+
     for idx, row in pre_pendentes.iterrows():
 
         with st.container():
@@ -2957,7 +2977,7 @@ def pagina_pre_reservas():
             st.subheader(f"👤 {row['nome']}")
 
             # =========================
-            # 📋 DADOS PESSOAIS
+            # 📋 DADOS DO CLIENTE
             # =========================
             st.markdown("### 📋 Dados do Cliente")
             st.write(f"📞 Telefone: {row['telefone']}")
@@ -2971,7 +2991,7 @@ def pagina_pre_reservas():
             # =========================
             st.markdown("### 📍 Endereço")
             st.write(f"CEP: {row['cep']}")
-            st.write(f"Logradouro: {row['logradouro']}, Nº {row['numero']}")
+            st.write(f"{row['logradouro']}, Nº {row['numero']}")
             st.write(f"Complemento: {row['complemento']}")
             st.write(f"Bairro: {row['bairro']}")
             st.write(f"Cidade: {row['cidade']}")
@@ -2995,22 +3015,38 @@ def pagina_pre_reservas():
             if col1.button("✅ Aprovar", key=f"aprovar_{row['id']}"):
 
                 nova_reserva = {
-                    "id": row["id"],
+                    # NÃO ENVIA ID (auto increment)
                     "cliente": row["nome"],
-                    "telefone": row["telefone"],
-                    "data": row["data"],
-                    "hora_inicio": row["hora_inicio"],
-                    "hora_fim": row["hora_fim"],
                     "brinquedos": row["brinquedos"],
+                    "data": str(row["data"]),
+                    "horario_entrega": str(row["hora_inicio"]) if row["hora_inicio"] else "",
+                    "horario_retirada": str(row["hora_fim"]) if row["hora_fim"] else "",
+                    "inicio_festa": str(row["hora_inicio"]) if row["hora_inicio"] else "",
+                    "fim_festa": str(row["hora_fim"]) if row["hora_fim"] else "",
+                    "valor_total": 0,
+                    "valor_extra": 0,
+                    "frete": 0,
+                    "desconto": 0,
+                    "sinal": 0,
+                    "falta": 0,
+                    "observacao": row["observacao"],
+                    "status": "Confirmada",
+                    "pagamentos": ""
                 }
 
-                reservas.loc[len(reservas)] = nova_reserva
+                # 🔥 Insere nova linha corretamente
+                reservas = pd.concat(
+                    [reservas, pd.DataFrame([nova_reserva])],
+                    ignore_index=True
+                )
+
                 salvar_dados(reservas, "reservas")
 
+                # Atualiza status da pré-reserva
                 pre.at[idx, "status"] = "Aprovada"
                 salvar_dados(pre, "pre_reservas")
 
-                st.success("Reserva aprovada com sucesso!")
+                st.success("Reserva aprovada e enviada para tabela reservas!")
                 st.rerun()
 
             # ======================================
@@ -3709,6 +3745,7 @@ else:
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
 
