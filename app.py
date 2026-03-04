@@ -2891,6 +2891,82 @@ def salvar_foto_imediato(foto_bytes: bytes, nome_hint: str, ext: str = ".jpg") -
     rel = destino.relative_to(Path(__file__).parent if "__file__" in globals() else Path.cwd())
     return rel.as_posix()
 
+# ======================================
+# PÁGINA: PRÉ-RESERVAS
+# ======================================
+
+from banco import carregar_dados, salvar_dados
+import pandas as pd
+import streamlit as st
+
+def pagina_pre_reservas():
+    st.header("📊 Aprovação de Pré-Reservas")
+
+    pre = carregar_dados(
+        "pre_reservas",
+        ["id", "nome", "telefone", "data", "hora_inicio",
+         "hora_fim", "brinquedos", "status"]
+    )
+
+    reservas = carregar_dados(
+        "reservas",
+        ["id", "cliente", "telefone", "data",
+         "hora_inicio", "hora_fim", "brinquedos"]
+    )
+
+    if pre.empty:
+        st.info("Nenhuma pré-reserva encontrada.")
+        return
+
+    pre_pendentes = pre[pre["status"] == "Pendente"]
+
+    if pre_pendentes.empty:
+        st.success("🎉 Nenhuma pré-reserva pendente!")
+        return
+
+    for idx, row in pre_pendentes.iterrows():
+
+        with st.container():
+            st.subheader(f"👤 {row['nome']}")
+            st.write(f"📅 Data: {row['data']}")
+            st.write(f"⏰ {row['hora_inicio']} - {row['hora_fim']}")
+            st.write(f"🎠 Brinquedos: {row['brinquedos']}")
+            st.write(f"📞 Telefone: {row['telefone']}")
+
+            col1, col2 = st.columns(2)
+
+            # ✅ APROVAR
+            if col1.button("✅ Aprovar", key=f"aprovar_{row['id']}"):
+
+                nova_reserva = {
+                    "id": row["id"],
+                    "cliente": row["nome"],
+                    "telefone": row["telefone"],
+                    "data": row["data"],
+                    "hora_inicio": row["hora_inicio"],
+                    "hora_fim": row["hora_fim"],
+                    "brinquedos": row["brinquedos"],
+                }
+
+                reservas.loc[len(reservas)] = nova_reserva
+                salvar_dados(reservas, "reservas")
+
+                pre.at[idx, "status"] = "Aprovada"
+                salvar_dados(pre, "pre_reservas")
+
+                st.success("Reserva aprovada com sucesso!")
+                st.rerun()
+
+            # ❌ RECUSAR
+            if col2.button("❌ Recusar", key=f"recusar_{row['id']}"):
+
+                pre.at[idx, "status"] = "Recusada"
+                salvar_dados(pre, "pre_reservas")
+
+                st.warning("Pré-reserva recusada.")
+                st.rerun()
+
+            st.divider()
 
 # ======================================
 # PÁGINA: Funcionários (Supabase)
@@ -3483,6 +3559,7 @@ else:
             "Brinquedos": ("🎠 Brinquedos", "brinquedos"),
             "Clientes": ("👨‍👩‍👧 Clientes", "clientes"),
             "Reservas": ("📅 Reservas", "reservas"),
+            "Pré-Reservas": ("📊 Aprovar Reservas", "pre_reservas"),
             "Agenda": ("🕓 Agenda", "agenda"),
             "Custos": ("💸 Custos", "custos"), 
             "Estoque": ("📦 Estoque", "estoque"),    
@@ -3567,11 +3644,14 @@ else:
         pagina_funcionarios()
     elif menu == "Envio WhatsApp":
         pagina_whatsapp()
-    elif menu == "Gerar Contrato":
+    elif menu == "Pré-Reservas":
+        pagina_pre_reservas()
+    elif menu == "Aprovar Reservas":
         pagina_contratos() 
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
 
