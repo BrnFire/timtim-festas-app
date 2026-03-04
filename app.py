@@ -2890,7 +2890,6 @@ def salvar_foto_imediato(foto_bytes: bytes, nome_hint: str, ext: str = ".jpg") -
     # retorna relativo ao app (portável)
     rel = destino.relative_to(Path(__file__).parent if "__file__" in globals() else Path.cwd())
     return rel.as_posix()
-
 # ======================================
 # PÁGINA: PRÉ-RESERVAS
 # ======================================
@@ -3003,7 +3002,7 @@ def pagina_pre_reservas():
         return
 
     # ==============================
-    # LOOP DAS PRÉ-RESERVAS
+    # LOOP
     # ==============================
 
     for idx, row in df.iterrows():
@@ -3012,46 +3011,38 @@ def pagina_pre_reservas():
 
         with st.expander(resumo):
 
-            # =========================
-            # 📋 DADOS DO CLIENTE
-            # =========================
             st.markdown("### 📋 Dados do Cliente")
-            st.write(f"📞 Telefone: {row['telefone']}")
-            st.write(f"📧 Email: {row['email']}")
-            st.write(f"🆔 RG: {row['rg']}")
+            st.write(f"📞 {row['telefone']}")
+            st.write(f"📧 {row['email']}")
             st.write(f"🪪 CPF: {row['cpf']}")
             st.write(f"📢 Como conheceu: {row['como_conheceu']}")
 
-            # =========================
-            # 📍 ENDEREÇO
-            # =========================
             st.markdown("### 📍 Endereço")
+            st.write(f"{row['logradouro']}, {row['numero']}")
+            st.write(f"{row['bairro']} - {row['cidade']}")
             st.write(f"CEP: {row['cep']}")
-            st.write(f"{row['logradouro']}, Nº {row['numero']}")
-            st.write(f"Complemento: {row['complemento']}")
-            st.write(f"Bairro: {row['bairro']}")
-            st.write(f"Cidade: {row['cidade']}")
 
-            # =========================
-            # 🎉 DADOS DA RESERVA
-            # =========================
             st.markdown("### 🎉 Dados da Reserva")
-            st.write(f"📅 Data: {row['data']}")
-            st.write(f"⏰ Horário: {row['hora_inicio']} - {row['hora_fim']}")
-            st.write(f"🎠 Brinquedos: {row['brinquedos']}")
-            st.write(f"📝 Observação: {row['observacao']}")
+            st.write(f"⏰ {row['hora_inicio']} - {row['hora_fim']}")
+            st.write(f"📝 {row['observacao']}")
             st.write(f"📌 Status: {row['status']}")
 
             # =========================
-            # BOTÕES (somente pendentes)
+            # BOTÕES (SOMENTE PENDENTES)
             # =========================
 
             if row["status"] == "Pendente":
 
                 col1, col2 = st.columns(2)
 
+                # ======================================
                 # ✅ APROVAR
+                # ======================================
                 if col1.button("✅ Aprovar", key=f"aprovar_{row['id']}"):
+
+                    # ---------------------------
+                    # 1️⃣ INSERE EM RESERVAS
+                    # ---------------------------
 
                     nova_reserva = {
                         "cliente": row["nome"],
@@ -3072,52 +3063,57 @@ def pagina_pre_reservas():
                         "pagamentos": ""
                     }
 
-                    reservas = pd.concat(
-                        [reservas, pd.DataFrame([nova_reserva])],
-                        ignore_index=True
-                    )
-                    salvar_dados(reservas, "reservas")
+                    salvar_dados(pd.DataFrame([nova_reserva]), "reservas")
 
-                    # SALVAR CLIENTE
+                    # ---------------------------
+                    # 2️⃣ CRIAR OU ATUALIZAR CLIENTE
+                    # ---------------------------
+
                     cliente_existente = clientes[
                         (clientes["cpf"] == row["cpf"]) |
                         (clientes["telefone"] == row["telefone"])
                     ]
 
+                    dados_cliente = {
+                        "nome": row["nome"],
+                        "telefone": row["telefone"],
+                        "email": row["email"],
+                        "tipo_cliente": "Pessoa Física",
+                        "rg": row["rg"],
+                        "cpf": row["cpf"],
+                        "cnpj": "",
+                        "como_conseguiu": row["como_conheceu"],
+                        "logradouro": row["logradouro"],
+                        "numero": row["numero"],
+                        "complemento": row["complemento"],
+                        "bairro": row["bairro"],
+                        "cidade": row["cidade"],
+                        "cep": row["cep"],
+                        "observacao": row["observacao"]
+                    }
+
                     if cliente_existente.empty:
+                        # INSERE NOVO
+                        salvar_dados(pd.DataFrame([dados_cliente]), "clientes")
+                    else:
+                        # ATUALIZA EXISTENTE
+                        id_cliente = cliente_existente.iloc[0]["id_cliente"]
+                        dados_cliente["id_cliente"] = id_cliente
+                        salvar_dados(pd.DataFrame([dados_cliente]), "clientes")
 
-                        novo_cliente = {
-                            "nome": row["nome"],
-                            "telefone": row["telefone"],
-                            "email": row["email"],
-                            "tipo_cliente": "Pessoa Física",
-                            "rg": row["rg"],
-                            "cpf": row["cpf"],
-                            "cnpj": "",
-                            "como_conseguiu": row["como_conheceu"],
-                            "logradouro": row["logradouro"],
-                            "numero": row["numero"],
-                            "complemento": row["complemento"],
-                            "bairro": row["bairro"],
-                            "cidade": row["cidade"],
-                            "cep": row["cep"],
-                            "observacao": row["observacao"]
-                        }
-
-                        clientes = pd.concat(
-                            [clientes, pd.DataFrame([novo_cliente])],
-                            ignore_index=True
-                        )
-
-                        salvar_dados(clientes, "clientes")
+                    # ---------------------------
+                    # 3️⃣ ATUALIZA STATUS
+                    # ---------------------------
 
                     pre.at[idx, "status"] = "Aprovada"
                     salvar_dados(pre, "pre_reservas")
 
-                    st.success("Reserva aprovada com sucesso!")
+                    st.success("Reserva aprovada e cliente atualizado!")
                     st.rerun()
 
+                # ======================================
                 # ❌ RECUSAR
+                # ======================================
                 if col2.button("❌ Recusar", key=f"recusar_{row['id']}"):
 
                     pre.at[idx, "status"] = "Recusada"
@@ -3809,6 +3805,7 @@ else:
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
 
