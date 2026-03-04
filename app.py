@@ -2898,24 +2898,22 @@ def salvar_foto_imediato(foto_bytes: bytes, nome_hint: str, ext: str = ".jpg") -
 from banco import carregar_dados, salvar_dados
 import pandas as pd
 import streamlit as st
+import urllib.parse
 
 def pagina_pre_reservas():
+
     st.header("📊 Aprovação de Pré-Reservas")
 
-    pre = carregar_dados(
-        "pre_reservas",
-        ["id", "nome", "telefone", "data", "hora_inicio",
-         "hora_fim", "brinquedos", "status"]
-    )
-
-    reservas = carregar_dados(
-        "reservas",
-        ["id", "cliente", "telefone", "data",
-         "hora_inicio", "hora_fim", "brinquedos"]
-    )
+    # 🔥 Carrega todas as colunas automaticamente
+    pre = carregar_dados("pre_reservas", "*")
+    reservas = carregar_dados("reservas", "*")
 
     if pre.empty:
-        st.info("Nenhuma pré-reserva encontrada.")
+        st.info("⚠️ Nenhuma pré-reserva encontrada.")
+        return
+
+    if "status" not in pre.columns:
+        st.error("❌ A coluna 'status' não existe na tabela pre_reservas.")
         return
 
     pre_pendentes = pre[pre["status"] == "Pendente"]
@@ -2924,43 +2922,76 @@ def pagina_pre_reservas():
         st.success("🎉 Nenhuma pré-reserva pendente!")
         return
 
-   for idx, row in pre_pendentes.iterrows():
+    # 🔥 Loop pelas pendentes
+    for idx, row in pre_pendentes.iterrows():
 
-    with st.container():
-        st.subheader(f"👤 {row['nome']}")
+        with st.container():
 
-        # 🔥 MOSTRAR TODOS OS CAMPOS DA LINHA
-        for coluna, valor in row.items():
-            if pd.notna(valor) and coluna != "id":
-                st.write(f"**{coluna.replace('_',' ').title()}**: {valor}")
+            st.subheader(f"👤 {row.get('nome', 'Sem Nome')}")
 
-        col1, col2 = st.columns(2)
+            st.markdown("### 📋 Informações da Pré-Reserva")
 
-        # ✅ APROVAR
-        if col1.button("✅ Aprovar", key=f"aprovar_{row['id']}"):
+            # 🔥 Mostra TODOS os campos automaticamente
+            for coluna, valor in row.items():
+                if pd.notna(valor) and coluna != "id":
+                    nome_formatado = coluna.replace("_", " ").title()
+                    st.write(f"**{nome_formatado}:** {valor}")
 
-            nova_reserva = row.to_dict()
-            nova_reserva.pop("status", None)
+            st.markdown("---")
 
-            reservas.loc[len(reservas)] = nova_reserva
-            salvar_dados(reservas, "reservas")
+            col1, col2 = st.columns(2)
 
-            pre.at[idx, "status"] = "Aprovada"
-            salvar_dados(pre, "pre_reservas")
+            # ======================================
+            # ✅ APROVAR
+            # ======================================
+            if col1.button("✅ Aprovar", key=f"aprovar_{row['id']}"):
 
-            st.success("Reserva aprovada com sucesso!")
-            st.rerun()
+                nova_reserva = row.to_dict()
+                nova_reserva.pop("status", None)
 
-        # ❌ RECUSAR
-        if col2.button("❌ Recusar", key=f"recusar_{row['id']}"):
+                # Adiciona na tabela reservas
+                reservas.loc[len(reservas)] = nova_reserva
+                salvar_dados(reservas, "reservas")
 
-            pre.at[idx, "status"] = "Recusada"
-            salvar_dados(pre, "pre_reservas")
+                # Atualiza status
+                pre.at[idx, "status"] = "Aprovada"
+                salvar_dados(pre, "pre_reservas")
 
-            st.warning("Pré-reserva recusada.")
-            st.rerun()
+                st.success("🎉 Reserva aprovada com sucesso!")
 
-        st.divider()
+                # 🔥 Gerar link WhatsApp automático
+                telefone = str(row.get("telefone", "")).replace("(", "").replace(")", "").replace("-", "").replace(" ", "")
+
+                mensagem = f"""
+Olá {row.get('nome','')} 👋
+
+Sua reserva para o dia {row.get('data','')} foi aprovada 🎉
+
+Brinquedos:
+{row.get('brinquedos','')}
+
+Em breve enviaremos os detalhes.
+"""
+
+                msg_formatada = urllib.parse.quote(mensagem)
+                link = f"https://wa.me/55{telefone}?text={msg_formatada}"
+
+                st.markdown(f"[📲 Enviar WhatsApp ao cliente]({link})")
+
+                st.rerun()
+
+            # ======================================
+            # ❌ RECUSAR
+            # ======================================
+            if col2.button("❌ Recusar", key=f"recusar_{row['id']}"):
+
+                pre.at[idx, "status"] = "Recusada"
+                salvar_dados(pre, "pre_reservas")
+
+                st.warning("Pré-reserva recusada.")
+                st.rerun()
+
+            st.divider()
 
 # ======================================
 # PÁGINA: Funcionários (Supabase)
@@ -3645,6 +3676,7 @@ else:
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
 
