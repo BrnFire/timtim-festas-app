@@ -2904,14 +2904,40 @@ def pagina_pre_reservas():
 
     pre = carregar_dados(
         "pre_reservas",
-        ["id", "nome", "telefone", "data", "hora_inicio",
-         "hora_fim", "brinquedos", "status"]
+        [
+            "id",
+            "nome",
+            "telefone",
+            "email",
+            "rg",
+            "cpf",
+            "como_conheceu",
+            "cep",
+            "logradouro",
+            "numero",
+            "complemento",
+            "bairro",
+            "cidade",
+            "observacao",
+            "data",
+            "hora_inicio",
+            "hora_fim",
+            "brinquedos",
+            "status"
+        ]
     )
 
     reservas = carregar_dados(
         "reservas",
-        ["id", "cliente", "telefone", "data",
-         "hora_inicio", "hora_fim", "brinquedos"]
+        [
+            "id",
+            "cliente",
+            "telefone",
+            "data",
+            "hora_inicio",
+            "hora_fim",
+            "brinquedos"
+        ]
     )
 
     if pre.empty:
@@ -2927,15 +2953,45 @@ def pagina_pre_reservas():
     for idx, row in pre_pendentes.iterrows():
 
         with st.container():
+
             st.subheader(f"👤 {row['nome']}")
-            st.write(f"📅 Data: {row['data']}")
-            st.write(f"⏰ {row['hora_inicio']} - {row['hora_fim']}")
-            st.write(f"🎠 Brinquedos: {row['brinquedos']}")
+
+            # =========================
+            # 📋 DADOS PESSOAIS
+            # =========================
+            st.markdown("### 📋 Dados do Cliente")
             st.write(f"📞 Telefone: {row['telefone']}")
+            st.write(f"📧 Email: {row['email']}")
+            st.write(f"🆔 RG: {row['rg']}")
+            st.write(f"🪪 CPF: {row['cpf']}")
+            st.write(f"📢 Como conheceu: {row['como_conheceu']}")
+
+            # =========================
+            # 📍 ENDEREÇO
+            # =========================
+            st.markdown("### 📍 Endereço")
+            st.write(f"CEP: {row['cep']}")
+            st.write(f"Logradouro: {row['logradouro']}, Nº {row['numero']}")
+            st.write(f"Complemento: {row['complemento']}")
+            st.write(f"Bairro: {row['bairro']}")
+            st.write(f"Cidade: {row['cidade']}")
+
+            # =========================
+            # 🎉 DADOS DA RESERVA
+            # =========================
+            st.markdown("### 🎉 Dados da Reserva")
+            st.write(f"📅 Data: {row['data']}")
+            st.write(f"⏰ Horário: {row['hora_inicio']} - {row['hora_fim']}")
+            st.write(f"🎠 Brinquedos: {row['brinquedos']}")
+            st.write(f"📝 Observação: {row['observacao']}")
+
+            st.markdown("---")
 
             col1, col2 = st.columns(2)
 
+            # ======================================
             # ✅ APROVAR
+            # ======================================
             if col1.button("✅ Aprovar", key=f"aprovar_{row['id']}"):
 
                 nova_reserva = {
@@ -2957,7 +3013,9 @@ def pagina_pre_reservas():
                 st.success("Reserva aprovada com sucesso!")
                 st.rerun()
 
+            # ======================================
             # ❌ RECUSAR
+            # ======================================
             if col2.button("❌ Recusar", key=f"recusar_{row['id']}"):
 
                 pre.at[idx, "status"] = "Recusada"
@@ -3651,6 +3709,7 @@ else:
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
 
