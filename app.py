@@ -2898,119 +2898,66 @@ def salvar_foto_imediato(foto_bytes: bytes, nome_hint: str, ext: str = ".jpg") -
 from banco import carregar_dados, salvar_dados
 import pandas as pd
 import streamlit as st
-import urllib.parse
-
 
 def pagina_pre_reservas():
-
     st.header("📊 Aprovação de Pré-Reservas")
 
-    # 🔥 Carrega dados sem quebrar
-    pre = carregar_dados("pre_reservas", [])
-    st.write("DEBUG pre:", pre)
-    if pre is None or pre.empty:
-        st.info("⚠️ Nenhuma pré-reserva encontrada.")
+    pre = carregar_dados(
+        "pre_reservas",
+        ["id", "nome", "telefone", "data", "hora_inicio",
+         "hora_fim", "brinquedos", "status"]
+    )
+
+    reservas = carregar_dados(
+        "reservas",
+        ["id", "cliente", "telefone", "data",
+         "hora_inicio", "hora_fim", "brinquedos"]
+    )
+
+    if pre.empty:
+        st.info("Nenhuma pré-reserva encontrada.")
         return
 
-    reservas = carregar_dados("reservas", [])
-    if reservas is None:
-        reservas = pd.DataFrame()
-
-    # 🔥 Garante que coluna status existe
-    if "status" not in pre.columns:
-        st.error("❌ A coluna 'status' não existe na tabela pre_reservas.")
-        return
-
-    # 🔥 Filtra pendentes
     pre_pendentes = pre[pre["status"] == "Pendente"]
 
     if pre_pendentes.empty:
         st.success("🎉 Nenhuma pré-reserva pendente!")
         return
 
-    # ======================================
-    # LOOP DAS PRÉ-RESERVAS
-    # ======================================
-
     for idx, row in pre_pendentes.iterrows():
 
         with st.container():
-
-            nome_cliente = row.get("nome", "Sem Nome")
-            st.subheader(f"👤 {nome_cliente}")
-
-            st.markdown("### 📋 Informações da Pré-Reserva")
-
-            # 🔥 Mostra todas as colunas automaticamente
-            for coluna, valor in row.items():
-                if pd.notna(valor) and coluna != "id":
-                    nome_formatado = coluna.replace("_", " ").title()
-                    st.write(f"**{nome_formatado}:** {valor}")
-
-            st.markdown("---")
+            st.subheader(f"👤 {row['nome']}")
+            st.write(f"📅 Data: {row['data']}")
+            st.write(f"⏰ {row['hora_inicio']} - {row['hora_fim']}")
+            st.write(f"🎠 Brinquedos: {row['brinquedos']}")
+            st.write(f"📞 Telefone: {row['telefone']}")
 
             col1, col2 = st.columns(2)
 
-            # ======================================
             # ✅ APROVAR
-            # ======================================
             if col1.button("✅ Aprovar", key=f"aprovar_{row['id']}"):
 
-                nova_reserva = row.to_dict()
+                nova_reserva = {
+                    "id": row["id"],
+                    "cliente": row["nome"],
+                    "telefone": row["telefone"],
+                    "data": row["data"],
+                    "hora_inicio": row["hora_inicio"],
+                    "hora_fim": row["hora_fim"],
+                    "brinquedos": row["brinquedos"],
+                }
 
-                # Remove status antes de inserir
-                if "status" in nova_reserva:
-                    del nova_reserva["status"]
-
-                # Adiciona na tabela reservas
-                reservas = pd.concat(
-                    [reservas, pd.DataFrame([nova_reserva])],
-                    ignore_index=True
-                )
-
+                reservas.loc[len(reservas)] = nova_reserva
                 salvar_dados(reservas, "reservas")
 
-                # Atualiza status para Aprovada
                 pre.at[idx, "status"] = "Aprovada"
                 salvar_dados(pre, "pre_reservas")
 
-                st.success("🎉 Reserva aprovada com sucesso!")
-
-                # ======================================
-                # 📲 GERAR LINK WHATSAPP
-                # ======================================
-
-                telefone = str(row.get("telefone", ""))
-
-                # limpa formatação
-                telefone = (
-                    telefone.replace("(", "")
-                    .replace(")", "")
-                    .replace("-", "")
-                    .replace(" ", "")
-                )
-
-                mensagem = f"""
-Olá {nome_cliente} 👋
-
-Sua reserva para o dia {row.get('data','')} foi aprovada 🎉
-
-Brinquedos:
-{row.get('brinquedos','')}
-
-Em breve enviaremos os detalhes.
-"""
-
-                msg_formatada = urllib.parse.quote(mensagem)
-                link = f"https://wa.me/55{telefone}?text={msg_formatada}"
-
-                st.markdown(f"[📲 Enviar WhatsApp ao cliente]({link})")
-
+                st.success("Reserva aprovada com sucesso!")
                 st.rerun()
 
-            # ======================================
             # ❌ RECUSAR
-            # ======================================
             if col2.button("❌ Recusar", key=f"recusar_{row['id']}"):
 
                 pre.at[idx, "status"] = "Recusada"
@@ -3704,6 +3651,7 @@ else:
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
 
