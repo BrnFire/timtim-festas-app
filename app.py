@@ -2890,252 +2890,196 @@ def salvar_foto_imediato(foto_bytes: bytes, nome_hint: str, ext: str = ".jpg") -
     # retorna relativo ao app (portável)
     rel = destino.relative_to(Path(__file__).parent if "__file__" in globals() else Path.cwd())
     return rel.as_posix()
-
-# ======================================
-# PÁGINA: PRÉ-RESERVAS
-# ======================================
-
 import streamlit as st
 import pandas as pd
-from banco import carregar_dados, supabase
+from datetime import datetime
+from supabase import create_client
 
+# CONEXÃO SUPABASE
+url = st.secrets["SUPABASE_URL"]
+key = st.secrets["SUPABASE_KEY"]
+supabase = create_client(url, key)
 
-def pagina_pre_reservas():
+st.title("📅 Gerenciar Pré-Reservas")
 
-    st.header("📅 Aprovação de Pré-Reservas")
+# -----------------------------
+# FUNÇÃO BUSCAR PRÉ RESERVAS
+# -----------------------------
+def buscar_pre_reservas():
 
-    # ======================================
-    # CARREGAR DADOS
-    # ======================================
-
-    pre = carregar_dados(
-        "pre_reservas",
-        [
-            "id","nome","telefone","email","rg","cpf","como_conheceu",
-            "cep","logradouro","numero","complemento","bairro","cidade",
-            "observacao","data","hora_inicio","hora_fim","brinquedos","status"
-        ]
+    resposta = (
+        supabase.table("pre_reservas")
+        .select("*")
+        .order("data_evento", desc=False)
+        .execute()
     )
 
-    reservas = carregar_dados(
-        "reservas",
-        [
-            "cliente","brinquedos","data","horario_entrega",
-            "horario_retirada","inicio_festa","fim_festa","status"
-        ]
-    )
+    if resposta.data:
+        return pd.DataFrame(resposta.data)
 
-    clientes = carregar_dados(
-        "clientes",
-        [
-            "nome","telefone","email","tipo_cliente","rg","cpf","cnpj",
-            "como_conseguiu","logradouro","numero","complemento",
-            "bairro","cidade","cep","observacao"
-        ]
-    )
+    return pd.DataFrame()
 
-    if pre.empty:
-        st.info("Nenhuma pré-reserva encontrada.")
+
+# -----------------------------
+# ATUALIZAR STATUS
+# -----------------------------
+def atualizar_status(id_reserva, novo_status):
+
+    supabase.table("pre_reservas")\
+        .update({"status": novo_status})\
+        .eq("id", id_reserva)\
+        .execute()
+
+
+# -----------------------------
+# SALVAR / ATUALIZAR CLIENTE
+# -----------------------------
+def salvar_cliente(dados):
+
+    cpf = dados["cpf"]
+
+    cliente = supabase.table("clientes")\
+        .select("*")\
+        .eq("cpf", cpf)\
+        .execute()
+
+    if cliente.data:
+
+        supabase.table("clientes")\
+            .update(dados)\
+            .eq("cpf", cpf)\
+            .execute()
+
+    else:
+
+        supabase.table("clientes")\
+            .insert(dados)\
+            .execute()
+
+
+# -----------------------------
+# BUSCAR DADOS
+# -----------------------------
+df = buscar_pre_reservas()
+
+if df.empty:
+    st.warning("⚠️ Nenhuma pré-reserva encontrada.")
+    st.stop()
+
+
+# -----------------------------
+# CONVERTER DATA
+# -----------------------------
+df["data_evento"] = pd.to_datetime(df["data_evento"], errors="coerce")
+
+hoje = datetime.today().date()
+
+reservas_hoje = df[df["data_evento"].dt.date == hoje]
+reservas_futuras = df[df["data_evento"].dt.date > hoje]
+reservas_concluidas = df[df["status"] == "Concluída"]
+
+
+# -----------------------------
+# INDICADORES
+# -----------------------------
+col1, col2, col3, col4 = st.columns(4)
+
+col1.metric("📊 Total de Reservas", len(df))
+col2.metric("📅 Hoje", len(reservas_hoje))
+col3.metric("🚀 Futuras", len(reservas_futuras))
+col4.metric("✅ Concluídas", len(reservas_concluidas))
+
+
+st.divider()
+
+
+# -----------------------------
+# TABS
+# -----------------------------
+tab1, tab2, tab3 = st.tabs(
+    ["📋 Pendentes", "✅ Aprovadas", "❌ Recusadas"]
+)
+
+
+# -----------------------------
+# FUNÇÃO MOSTRAR RESERVAS
+# -----------------------------
+def mostrar_reservas(df_status):
+
+    if df_status.empty:
+        st.info("Nenhuma reserva encontrada.")
         return
 
-    # ======================================
-    # ORDENAR POR DATA
-    # ======================================
+    for _, row in df_status.iterrows():
 
-    pre["data"] = pd.to_datetime(pre["data"])
-    pre = pre.sort_values("data")
+        titulo = f"{row['nome']} — {row['data_evento'].date()}"
 
-    # ======================================
-    # INDICADORES
-    # ======================================
-
-    pendentes = len(pre[pre["status"] == "Pendente"])
-    aprovadas = len(pre[pre["status"] == "Aprovada"])
-    recusadas = len(pre[pre["status"] == "Recusada"])
-    total = len(pre)
-
-    c1, c2, c3, c4 = st.columns(4)
-
-    c1.metric("📊 Total", total)
-    c2.metric("⏳ Pendentes", pendentes)
-    c3.metric("✅ Aprovadas", aprovadas)
-    c4.metric("❌ Recusadas", recusadas)
-
-    st.divider()
-
-    # ======================================
-    # ABAS
-    # ======================================
-
-    tab1, tab2, tab3 = st.tabs(
-        ["⏳ Pendentes", "✅ Aprovadas", "❌ Recusadas"]
-    )
-
-    # ======================================
-    # FUNÇÃO DE CARD
-    # ======================================
-
-    def mostrar_reserva(row):
-
-        with st.container():
-
-            st.subheader(f"👤 {row['nome']}")
+        with st.expander(titulo):
 
             col1, col2 = st.columns(2)
 
-            with col1:
-                st.write(f"📅 Data: {row['data'].strftime('%d/%m/%Y')}")
-                st.write(f"⏰ {row['hora_inicio']} - {row['hora_fim']}")
-                st.write(f"🎠 Brinquedos: {row['brinquedos']}")
+            col1.write("**Telefone:**", row["telefone"])
+            col1.write("**Email:**", row["email"])
+            col1.write("**CPF:**", row["cpf"])
+            col1.write("**RG:**", row["rg"])
 
-            with col2:
-                st.write(f"📞 Telefone: {row['telefone']}")
-                st.write(f"📧 Email: {row['email']}")
-                st.write(f"📍 Cidade: {row['cidade']}")
+            col2.write("**Endereço:**", row["logradouro"])
+            col2.write("**Número:**", row["numero"])
+            col2.write("**Bairro:**", row["bairro"])
+            col2.write("**Cidade:**", row["cidade"])
 
-            # ======================================
-            # DETALHES EXPANDIDOS
-            # ======================================
-
-            with st.expander("📋 Ver todos dados do cliente"):
-
-                st.write("**Documento**")
-                st.write(f"RG: {row['rg']}")
-                st.write(f"CPF: {row['cpf']}")
-
-                st.write("**Endereço**")
-                st.write(f"{row['logradouro']}, {row['numero']}")
-                st.write(f"{row['bairro']} - {row['cidade']}")
-                st.write(f"CEP: {row['cep']}")
-
-                st.write("**Origem**")
-                st.write(row["como_conheceu"])
-
-                st.write("**Observação**")
-                st.write(row["observacao"])
-
-            # ======================================
-            # BOTÕES
-            # ======================================
-
-            if row["status"] == "Pendente":
-
-                col1, col2 = st.columns(2)
-
-                # =============================
-                # APROVAR
-                # =============================
-
-                if col1.button("✅ Aprovar", key=f"aprovar_{row['id']}"):
-
-                    # CRIAR RESERVA
-
-                    nova_reserva = {
-                        "cliente": row["nome"],
-                        "brinquedos": row["brinquedos"],
-                        "data": row["data"].strftime("%d/%m/%Y"),
-                        "horario_entrega": row["hora_inicio"],
-                        "horario_retirada": row["hora_fim"],
-                        "inicio_festa": row["hora_inicio"],
-                        "fim_festa": row["hora_fim"],
-                        "status": "Confirmada"
-                    }
-
-                    supabase.table("reservas").insert(nova_reserva).execute()
-
-                    # =============================
-                    # CLIENTE (UPSERT)
-                    # =============================
-
-                    cliente_data = {
-                        "nome": row["nome"],
-                        "telefone": row["telefone"],
-                        "email": row["email"],
-                        "tipo_cliente": "Pessoa Física",
-                        "rg": row["rg"],
-                        "cpf": row["cpf"],
-                        "cnpj": "",
-                        "como_conseguiu": row["como_conheceu"],
-                        "logradouro": row["logradouro"],
-                        "numero": row["numero"],
-                        "complemento": row["complemento"],
-                        "bairro": row["bairro"],
-                        "cidade": row["cidade"],
-                        "cep": row["cep"],
-                        "observacao": row["observacao"]
-                    }
-
-                    supabase.table("clientes").upsert(cliente_data).execute()
-
-                    # =============================
-                    # ATUALIZAR STATUS
-                    # =============================
-
-                    supabase.table("pre_reservas")\
-                        .update({"status": "Aprovada"})\
-                        .eq("id", row["id"])\
-                        .execute()
-
-                    st.success("Reserva aprovada!")
-                    st.rerun()
-
-                # =============================
-                # RECUSAR
-                # =============================
-
-                if col2.button("❌ Recusar", key=f"recusar_{row['id']}"):
-
-                    supabase.table("pre_reservas")\
-                        .update({"status": "Recusada"})\
-                        .eq("id", row["id"])\
-                        .execute()
-
-                    st.warning("Pré-reserva recusada.")
-                    st.rerun()
+            st.write("**Observação:**", row["observacao"])
 
             st.divider()
 
-    # ======================================
-    # ABA PENDENTES
-    # ======================================
+            colA, colB = st.columns(2)
 
-    with tab1:
+            if colA.button("✅ Aprovar", key=f"a{row['id']}"):
 
-        dados = pre[pre["status"] == "Pendente"]
+                atualizar_status(row["id"], "Aprovada")
 
-        if dados.empty:
-            st.info("Nenhuma pré-reserva pendente.")
-        else:
-            for _, row in dados.iterrows():
-                mostrar_reserva(row)
+                dados_cliente = {
+                    "nome": row["nome"],
+                    "telefone": row["telefone"],
+                    "email": row["email"],
+                    "tipo_cliente": row["tipo_cliente"],
+                    "rg": row["rg"],
+                    "cpf": row["cpf"],
+                    "cnpj": row["cnpj"],
+                    "como_conseguiu": row["como_conseguiu"],
+                    "logradouro": row["logradouro"],
+                    "numero": row["numero"],
+                    "complemento": row["complemento"],
+                    "bairro": row["bairro"],
+                    "cidade": row["cidade"],
+                    "cep": row["cep"],
+                    "observacao": row["observacao"]
+                }
 
-    # ======================================
-    # ABA APROVADAS
-    # ======================================
+                salvar_cliente(dados_cliente)
 
-    with tab2:
+                st.success("Reserva aprovada")
+                st.rerun()
 
-        dados = pre[pre["status"] == "Aprovada"]
+            if colB.button("❌ Recusar", key=f"r{row['id']}"):
 
-        if dados.empty:
-            st.info("Nenhuma reserva aprovada.")
-        else:
-            for _, row in dados.iterrows():
-                mostrar_reserva(row)
+                atualizar_status(row["id"], "Recusada")
 
-    # ======================================
-    # ABA RECUSADAS
-    # ======================================
+                st.warning("Reserva recusada")
+                st.rerun()
 
-    with tab3:
 
-        dados = pre[pre["status"] == "Recusada"]
+# -----------------------------
+# TABS
+# -----------------------------
+with tab1:
+    mostrar_reservas(df[df["status"] == "Pendente"])
 
-        if dados.empty:
-            st.info("Nenhuma reserva recusada.")
-        else:
-            for _, row in dados.iterrows():
-                mostrar_reserva(row)
+with tab2:
+    mostrar_reservas(df[df["status"] == "Aprovada"])
+
+with tab3:
+    mostrar_reservas(df[df["status"] == "Recusada"])
 
 
 
@@ -3822,6 +3766,7 @@ else:
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
 
