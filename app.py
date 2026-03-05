@@ -2891,7 +2891,251 @@ def salvar_foto_imediato(foto_bytes: bytes, nome_hint: str, ext: str = ".jpg") -
     rel = destino.relative_to(Path(__file__).parent if "__file__" in globals() else Path.cwd())
     return rel.as_posix()
 
+# ======================================
+# PÁGINA: PRÉ-RESERVAS
+# ======================================
 
+import streamlit as st
+import pandas as pd
+from banco import carregar_dados, supabase
+
+
+def pagina_pre_reservas():
+
+    st.header("📅 Aprovação de Pré-Reservas")
+
+    # ======================================
+    # CARREGAR DADOS
+    # ======================================
+
+    pre = carregar_dados(
+        "pre_reservas",
+        [
+            "id","nome","telefone","email","rg","cpf","como_conheceu",
+            "cep","logradouro","numero","complemento","bairro","cidade",
+            "observacao","data","hora_inicio","hora_fim","brinquedos","status"
+        ]
+    )
+
+    reservas = carregar_dados(
+        "reservas",
+        [
+            "cliente","brinquedos","data","horario_entrega",
+            "horario_retirada","inicio_festa","fim_festa","status"
+        ]
+    )
+
+    clientes = carregar_dados(
+        "clientes",
+        [
+            "nome","telefone","email","tipo_cliente","rg","cpf","cnpj",
+            "como_conseguiu","logradouro","numero","complemento",
+            "bairro","cidade","cep","observacao"
+        ]
+    )
+
+    if pre.empty:
+        st.info("Nenhuma pré-reserva encontrada.")
+        return
+
+    # ======================================
+    # ORDENAR POR DATA
+    # ======================================
+
+    pre["data"] = pd.to_datetime(pre["data"])
+    pre = pre.sort_values("data")
+
+    # ======================================
+    # INDICADORES
+    # ======================================
+
+    pendentes = len(pre[pre["status"] == "Pendente"])
+    aprovadas = len(pre[pre["status"] == "Aprovada"])
+    recusadas = len(pre[pre["status"] == "Recusada"])
+    total = len(pre)
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    c1.metric("📊 Total", total)
+    c2.metric("⏳ Pendentes", pendentes)
+    c3.metric("✅ Aprovadas", aprovadas)
+    c4.metric("❌ Recusadas", recusadas)
+
+    st.divider()
+
+    # ======================================
+    # ABAS
+    # ======================================
+
+    tab1, tab2, tab3 = st.tabs(
+        ["⏳ Pendentes", "✅ Aprovadas", "❌ Recusadas"]
+    )
+
+    # ======================================
+    # FUNÇÃO DE CARD
+    # ======================================
+
+    def mostrar_reserva(row):
+
+        with st.container():
+
+            st.subheader(f"👤 {row['nome']}")
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.write(f"📅 Data: {row['data'].strftime('%d/%m/%Y')}")
+                st.write(f"⏰ {row['hora_inicio']} - {row['hora_fim']}")
+                st.write(f"🎠 Brinquedos: {row['brinquedos']}")
+
+            with col2:
+                st.write(f"📞 Telefone: {row['telefone']}")
+                st.write(f"📧 Email: {row['email']}")
+                st.write(f"📍 Cidade: {row['cidade']}")
+
+            # ======================================
+            # DETALHES EXPANDIDOS
+            # ======================================
+
+            with st.expander("📋 Ver todos dados do cliente"):
+
+                st.write("**Documento**")
+                st.write(f"RG: {row['rg']}")
+                st.write(f"CPF: {row['cpf']}")
+
+                st.write("**Endereço**")
+                st.write(f"{row['logradouro']}, {row['numero']}")
+                st.write(f"{row['bairro']} - {row['cidade']}")
+                st.write(f"CEP: {row['cep']}")
+
+                st.write("**Origem**")
+                st.write(row["como_conheceu"])
+
+                st.write("**Observação**")
+                st.write(row["observacao"])
+
+            # ======================================
+            # BOTÕES
+            # ======================================
+
+            if row["status"] == "Pendente":
+
+                col1, col2 = st.columns(2)
+
+                # =============================
+                # APROVAR
+                # =============================
+
+                if col1.button("✅ Aprovar", key=f"aprovar_{row['id']}"):
+
+                    # CRIAR RESERVA
+
+                    nova_reserva = {
+                        "cliente": row["nome"],
+                        "brinquedos": row["brinquedos"],
+                        "data": row["data"].strftime("%d/%m/%Y"),
+                        "horario_entrega": row["hora_inicio"],
+                        "horario_retirada": row["hora_fim"],
+                        "inicio_festa": row["hora_inicio"],
+                        "fim_festa": row["hora_fim"],
+                        "status": "Confirmada"
+                    }
+
+                    supabase.table("reservas").insert(nova_reserva).execute()
+
+                    # =============================
+                    # CLIENTE (UPSERT)
+                    # =============================
+
+                    cliente_data = {
+                        "nome": row["nome"],
+                        "telefone": row["telefone"],
+                        "email": row["email"],
+                        "tipo_cliente": "Pessoa Física",
+                        "rg": row["rg"],
+                        "cpf": row["cpf"],
+                        "cnpj": "",
+                        "como_conseguiu": row["como_conheceu"],
+                        "logradouro": row["logradouro"],
+                        "numero": row["numero"],
+                        "complemento": row["complemento"],
+                        "bairro": row["bairro"],
+                        "cidade": row["cidade"],
+                        "cep": row["cep"],
+                        "observacao": row["observacao"]
+                    }
+
+                    supabase.table("clientes").upsert(cliente_data).execute()
+
+                    # =============================
+                    # ATUALIZAR STATUS
+                    # =============================
+
+                    supabase.table("pre_reservas")\
+                        .update({"status": "Aprovada"})\
+                        .eq("id", row["id"])\
+                        .execute()
+
+                    st.success("Reserva aprovada!")
+                    st.rerun()
+
+                # =============================
+                # RECUSAR
+                # =============================
+
+                if col2.button("❌ Recusar", key=f"recusar_{row['id']}"):
+
+                    supabase.table("pre_reservas")\
+                        .update({"status": "Recusada"})\
+                        .eq("id", row["id"])\
+                        .execute()
+
+                    st.warning("Pré-reserva recusada.")
+                    st.rerun()
+
+            st.divider()
+
+    # ======================================
+    # ABA PENDENTES
+    # ======================================
+
+    with tab1:
+
+        dados = pre[pre["status"] == "Pendente"]
+
+        if dados.empty:
+            st.info("Nenhuma pré-reserva pendente.")
+        else:
+            for _, row in dados.iterrows():
+                mostrar_reserva(row)
+
+    # ======================================
+    # ABA APROVADAS
+    # ======================================
+
+    with tab2:
+
+        dados = pre[pre["status"] == "Aprovada"]
+
+        if dados.empty:
+            st.info("Nenhuma reserva aprovada.")
+        else:
+            for _, row in dados.iterrows():
+                mostrar_reserva(row)
+
+    # ======================================
+    # ABA RECUSADAS
+    # ======================================
+
+    with tab3:
+
+        dados = pre[pre["status"] == "Recusada"]
+
+        if dados.empty:
+            st.info("Nenhuma reserva recusada.")
+        else:
+            for _, row in dados.iterrows():
+                mostrar_reserva(row)
 
 
 
@@ -3578,6 +3822,7 @@ else:
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
 
