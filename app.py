@@ -2890,6 +2890,7 @@ def salvar_foto_imediato(foto_bytes: bytes, nome_hint: str, ext: str = ".jpg") -
     # retorna relativo ao app (portável)
     rel = destino.relative_to(Path(__file__).parent if "__file__" in globals() else Path.cwd())
     return rel.as_posix()
+
 # ======================================
 # PÁGINA: PRÉ-RESERVAS
 # ======================================
@@ -2900,11 +2901,12 @@ import streamlit as st
 
 
 def pagina_pre_reservas():
+
     st.header("📊 Gestão de Pré-Reservas")
 
-    # ==============================
+    # =============================
     # CARREGAR DADOS
-    # ==============================
+    # =============================
 
     pre = carregar_dados(
         "pre_reservas",
@@ -2980,9 +2982,9 @@ def pagina_pre_reservas():
         st.info("Nenhuma pré-reserva encontrada.")
         return
 
-    # ==============================
-    # MENU INTERNO
-    # ==============================
+    # =============================
+    # MENU DE STATUS
+    # =============================
 
     menu = st.radio(
         "Filtrar por status:",
@@ -3001,9 +3003,9 @@ def pagina_pre_reservas():
         st.info("Nenhum registro encontrado.")
         return
 
-    # ==============================
-    # LOOP
-    # ==============================
+    # =============================
+    # LOOP DAS PRÉ-RESERVAS
+    # =============================
 
     for idx, row in df.iterrows():
 
@@ -3011,47 +3013,56 @@ def pagina_pre_reservas():
 
         with st.expander(resumo):
 
-            st.markdown("### 📋 Dados do Cliente")
-            st.write(f"📞 {row['telefone']}")
-            st.write(f"📧 {row['email']}")
-            st.write(f"🪪 CPF: {row['cpf']}")
-            st.write(f"📢 Como conheceu: {row['como_conheceu']}")
+            st.markdown("### 👤 Cliente")
+
+            st.write("Nome:", row["nome"])
+            st.write("Telefone:", row["telefone"])
+            st.write("Email:", row["email"])
+            st.write("CPF:", row["cpf"])
+            st.write("RG:", row["rg"])
+            st.write("Como conheceu:", row["como_conheceu"])
 
             st.markdown("### 📍 Endereço")
-            st.write(f"{row['logradouro']}, {row['numero']}")
-            st.write(f"{row['bairro']} - {row['cidade']}")
-            st.write(f"CEP: {row['cep']}")
+
+            st.write("CEP:", row["cep"])
+            st.write("Logradouro:", row["logradouro"])
+            st.write("Número:", row["numero"])
+            st.write("Complemento:", row["complemento"])
+            st.write("Bairro:", row["bairro"])
+            st.write("Cidade:", row["cidade"])
 
             st.markdown("### 🎉 Dados da Reserva")
-            st.write(f"⏰ {row['hora_inicio']} - {row['hora_fim']}")
-            st.write(f"📝 {row['observacao']}")
-            st.write(f"📌 Status: {row['status']}")
 
-            # =========================
-            # BOTÕES (SOMENTE PENDENTES)
-            # =========================
+            st.write("Data:", row["data"])
+            st.write("Hora início:", row["hora_inicio"])
+            st.write("Hora fim:", row["hora_fim"])
+            st.write("Brinquedos:", row["brinquedos"])
+            st.write("Observação:", row["observacao"])
+
+            # =============================
+            # BOTÕES APENAS PARA PENDENTES
+            # =============================
 
             if row["status"] == "Pendente":
 
                 col1, col2 = st.columns(2)
 
-                # ======================================
-                # ✅ APROVAR
-                # ======================================
+                # =====================================
+                # APROVAR
+                # =====================================
+
                 if col1.button("✅ Aprovar", key=f"aprovar_{row['id']}"):
 
-                    # ---------------------------
-                    # 1️⃣ INSERE EM RESERVAS
-                    # ---------------------------
+                    # CRIAR RESERVA
 
                     nova_reserva = {
                         "cliente": row["nome"],
                         "brinquedos": row["brinquedos"],
                         "data": str(row["data"]),
-                        "horario_entrega": str(row["hora_inicio"]) if row["hora_inicio"] else "",
-                        "horario_retirada": str(row["hora_fim"]) if row["hora_fim"] else "",
-                        "inicio_festa": str(row["hora_inicio"]) if row["hora_inicio"] else "",
-                        "fim_festa": str(row["hora_fim"]) if row["hora_fim"] else "",
+                        "horario_entrega": str(row["hora_inicio"]),
+                        "horario_retirada": str(row["hora_fim"]),
+                        "inicio_festa": str(row["hora_inicio"]),
+                        "fim_festa": str(row["hora_fim"]),
                         "valor_total": 0,
                         "valor_extra": 0,
                         "frete": 0,
@@ -3065,9 +3076,9 @@ def pagina_pre_reservas():
 
                     salvar_dados(pd.DataFrame([nova_reserva]), "reservas")
 
-                    # ---------------------------
-                    # 2️⃣ CRIAR OU ATUALIZAR CLIENTE
-                    # ---------------------------
+                    # =====================================
+                    # CLIENTE - CRIAR OU ATUALIZAR
+                    # =====================================
 
                     cliente_existente = clientes[
                         (clientes["cpf"] == row["cpf"]) |
@@ -3093,31 +3104,49 @@ def pagina_pre_reservas():
                     }
 
                     if cliente_existente.empty:
-                        # INSERE NOVO
-                        salvar_dados(pd.DataFrame([dados_cliente]), "clientes")
+
+                        salvar_dados(
+                            pd.DataFrame([dados_cliente]),
+                            "clientes"
+                        )
+
                     else:
-                        # ATUALIZA EXISTENTE
-                        id_cliente = cliente_existente.iloc[0]["id_cliente"]
-                        dados_cliente["id_cliente"] = id_cliente
-                        salvar_dados(pd.DataFrame([dados_cliente]), "clientes")
 
-                    # ---------------------------
-                    # 3️⃣ ATUALIZA STATUS
-                    # ---------------------------
+                        dados_cliente["id_cliente"] = cliente_existente.iloc[0]["id_cliente"]
 
-                    pre.at[idx, "status"] = "Aprovada"
-                    salvar_dados(pre, "pre_reservas")
+                        salvar_dados(
+                            pd.DataFrame([dados_cliente]),
+                            "clientes"
+                        )
 
-                    st.success("Reserva aprovada e cliente atualizado!")
+                    # =====================================
+                    # ATUALIZAR STATUS DA PRÉ-RESERVA
+                    # =====================================
+
+                    salvar_dados(
+                        pd.DataFrame([{
+                            "id": row["id"],
+                            "status": "Aprovada"
+                        }]),
+                        "pre_reservas"
+                    )
+
+                    st.success("Reserva aprovada com sucesso!")
                     st.rerun()
 
-                # ======================================
-                # ❌ RECUSAR
-                # ======================================
+                # =====================================
+                # RECUSAR
+                # =====================================
+
                 if col2.button("❌ Recusar", key=f"recusar_{row['id']}"):
 
-                    pre.at[idx, "status"] = "Recusada"
-                    salvar_dados(pre, "pre_reservas")
+                    salvar_dados(
+                        pd.DataFrame([{
+                            "id": row["id"],
+                            "status": "Recusada"
+                        }]),
+                        "pre_reservas"
+                    )
 
                     st.warning("Pré-reserva recusada.")
                     st.rerun()
@@ -3805,6 +3834,7 @@ else:
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
 
