@@ -2892,7 +2892,6 @@ def salvar_foto_imediato(foto_bytes: bytes, nome_hint: str, ext: str = ".jpg") -
     return rel.as_posix()
 
 
-
 # ======================================
 # PÁGINA: PRÉ-RESERVAS
 # ======================================
@@ -2900,15 +2899,35 @@ def salvar_foto_imediato(foto_bytes: bytes, nome_hint: str, ext: str = ".jpg") -
 from banco import carregar_dados, salvar_dados
 import pandas as pd
 import streamlit as st
+import requests
 
+SUPABASE_URL = st.secrets["SUPABASE_URL"]
+SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+
+
+# ======================================
+# FUNÇÃO PARA EXCLUIR REGISTRO
+# ======================================
+
+def deletar_pre_reserva(id_registro):
+
+    url = f"{SUPABASE_URL}/rest/v1/pre_reservas?id=eq.{id_registro}"
+
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}"
+    }
+
+    requests.delete(url, headers=headers)
+
+
+# ======================================
+# PÁGINA
+# ======================================
 
 def pagina_pre_reservas():
 
     st.header("📅 Gerenciar Pré-Reservas")
-
-    # ===============================
-    # CARREGAR DADOS
-    # ===============================
 
     pre = carregar_dados(
         "pre_reservas",
@@ -2927,10 +2946,6 @@ def pagina_pre_reservas():
         st.warning("⚠️ Nenhuma pré-reserva encontrada.")
         return
 
-    # ===============================
-    # FORMATAR DATA
-    # ===============================
-
     pre["data"] = pd.to_datetime(pre["data"], errors="coerce")
     pre = pre.sort_values("data")
 
@@ -2941,20 +2956,14 @@ def pagina_pre_reservas():
     pendentes = len(pre[pre["status"] == "Pendente"])
     aprovadas = len(pre[pre["status"] == "Aprovada"])
     recusadas = len(pre[pre["status"] == "Recusada"])
-    total = len(pre)
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3 = st.columns(3)
 
-    c1.metric("📊 Total", total)
-    c2.metric("🟡 Pendentes", pendentes)
-    c3.metric("🟢 Aprovadas", aprovadas)
-    c4.metric("🔴 Recusadas", recusadas)
+    c1.metric("🟡 Pendentes", pendentes)
+    c2.metric("🟢 Aprovadas", aprovadas)
+    c3.metric("🔴 Recusadas", recusadas)
 
     st.divider()
-
-    # ===============================
-    # ABAS
-    # ===============================
 
     aba1, aba2, aba3 = st.tabs(["🟡 Pendentes", "🟢 Aprovadas", "🔴 Recusadas"])
 
@@ -2999,10 +3008,7 @@ def pagina_pre_reservas():
 
                     colA, colB = st.columns(2)
 
-                    # ===============================
                     # APROVAR
-                    # ===============================
-
                     if colA.button("✅ Aprovar", key=f"aprovar_{row['id']}"):
 
                         # criar reserva
@@ -3023,45 +3029,39 @@ def pagina_pre_reservas():
                         salvar_dados(reservas, "reservas")
 
                         # atualizar status
-                        registro = row.copy()
-                        registro["status"] = "Aprovada"
+                        novo_registro = row.copy()
+                        novo_registro["status"] = "Aprovada"
 
-                        # remover antigo
-                        pre = pre[pre["id"] != row["id"]]
+                        # deletar antigo
+                        deletar_pre_reserva(row["id"])
 
-                        # adicionar atualizado
-                        pre = pd.concat(
-                            [pre, pd.DataFrame([registro])],
-                            ignore_index=True
+                        # inserir novo
+                        salvar_dados(
+                            pd.DataFrame([novo_registro]),
+                            "pre_reservas"
                         )
-
-                        salvar_dados(pre, "pre_reservas")
 
                         st.success("Reserva aprovada!")
                         st.rerun()
 
-                    # ===============================
                     # RECUSAR
-                    # ===============================
-
                     if colB.button("❌ Recusar", key=f"recusar_{row['id']}"):
 
-                        registro = row.copy()
-                        registro["status"] = "Recusada"
+                        novo_registro = row.copy()
+                        novo_registro["status"] = "Recusada"
 
-                        pre = pre[pre["id"] != row["id"]]
+                        deletar_pre_reserva(row["id"])
 
-                        pre = pd.concat(
-                            [pre, pd.DataFrame([registro])],
-                            ignore_index=True
+                        salvar_dados(
+                            pd.DataFrame([novo_registro]),
+                            "pre_reservas"
                         )
-
-                        salvar_dados(pre, "pre_reservas")
 
                         st.warning("Pré-reserva recusada.")
                         st.rerun()
 
                 st.divider()
+
 
 # ======================================
 # PÁGINA: Funcionários (Supabase)
@@ -3746,6 +3746,7 @@ else:
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
 
