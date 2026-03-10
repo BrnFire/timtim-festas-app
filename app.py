@@ -3135,7 +3135,7 @@ def pagina_pre_reservas():
                         st.rerun()
 
                 st.divider()
-``
+
 
 
 # ======================================
@@ -3821,6 +3821,7 @@ else:
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
 
