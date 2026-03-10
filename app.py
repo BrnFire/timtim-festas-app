@@ -2995,7 +2995,7 @@ def pagina_pre_reservas():
 
                 if status == "Pendente":
 
-                    colA, colB = st.columns(2)
+                    colA, colB, colC = st.columns(3)
 
                     # ===============================
                     # APROVAR
@@ -3057,6 +3057,19 @@ def pagina_pre_reservas():
                         salvar_dados(pre, "pre_reservas")
 
                         st.warning("Pré-reserva recusada.")
+                        st.rerun()
+
+
+                # EXCLUIR
+                    if b3.button("🗑 Excluir", key=f"excluir_{idx}"):
+
+                        # remove a linha
+                        pre = pre.drop(idx)
+
+                        # salva novamente
+                        salvar_dados(pre, "pre_reservas")
+
+                        st.warning("Pré-reserva excluída.")
                         st.rerun()
 
                 st.divider()
@@ -3745,6 +3758,7 @@ else:
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
 
