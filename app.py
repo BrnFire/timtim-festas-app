@@ -2890,13 +2890,20 @@ def salvar_foto_imediato(foto_bytes: bytes, nome_hint: str, ext: str = ".jpg") -
     # retorna relativo ao app (portável)
     rel = destino.relative_to(Path(__file__).parent if "__file__" in globals() else Path.cwd())
     return rel.as_posix()
+
 # ======================================
 # PÁGINA: PRÉ-RESERVAS
 # ======================================
 
 from banco import carregar_dados, salvar_dados
+from supabase import create_client
 import pandas as pd
 import streamlit as st
+
+
+url = st.secrets["SUPABASE_URL"]
+key = st.secrets["SUPABASE_KEY"]
+supabase = create_client(url, key)
 
 
 def pagina_pre_reservas():
@@ -2913,25 +2920,8 @@ def pagina_pre_reservas():
         ]
     )
 
-    reservas = carregar_dados(
-        "reservas",
-        [
-            "id","cliente","brinquedos","data",
-            "inicio_festa","fim_festa","horario_entrega",
-            "horario_retirada","valor_total","sinal","falta",
-            "observacao","status","pagamentos"
-        ]
-    )
-
-    clientes = carregar_dados(
-        "clientes",
-        [
-            "id_cliente","nome","telefone","email",
-            "rg","cpf","logradouro","numero",
-            "complemento","bairro","cidade","cep",
-            "observacao"
-        ]
-    )
+    reservas = carregar_dados("reservas", ["*"])
+    clientes = carregar_dados("clientes", ["*"])
 
     if pre.empty:
         st.warning("⚠️ Nenhuma pré-reserva encontrada.")
@@ -2939,40 +2929,6 @@ def pagina_pre_reservas():
 
     pre["data"] = pd.to_datetime(pre["data"], errors="coerce")
     pre = pre.sort_values("data")
-
-    pendentes = len(pre[pre["status"] == "Pendente"])
-    aprovadas = len(pre[pre["status"] == "Aprovada"])
-    recusadas = len(pre[pre["status"] == "Recusada"])
-    total = len(pre)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    c1, c2, c3, c4 = st.columns(4)
-
-    cards = [
-        ("📊 Total", total, "#7A5FFF"),
-        ("🟡 Pendentes", pendentes, "#F1C40F"),
-        ("🟢 Aprovadas", aprovadas, "#2ECC71"),
-        ("🔴 Recusadas", recusadas, "#E74C3C"),
-    ]
-
-    for col, (label, value, color) in zip([c1,c2,c3,c4], cards):
-        col.markdown(
-            f"""
-            <div style="background-color:#f9f9f9;
-                        border-left:6px solid {color};
-                        border-radius:12px;
-                        padding:15px;
-                        text-align:center;
-                        box-shadow:2px 2px 10px rgba(0,0,0,0.08);">
-                <div style="font-size:0.9em;color:#555">{label}</div>
-                <div style="font-size:1.7em;font-weight:800">{value}</div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-    st.divider()
 
     aba1, aba2, aba3 = st.tabs(["🟡 Pendentes", "🟢 Aprovadas", "🔴 Recusadas"])
 
@@ -2994,79 +2950,122 @@ def pagina_pre_reservas():
 
             for idx, row in df.iterrows():
 
-                with st.container():
+                col1, col2, col3 = st.columns(3)
 
-                    col1, col2, col3 = st.columns(3)
+                col1.subheader(row["nome"])
+                col2.write(row["data"].strftime("%d/%m/%Y"))
+                col3.write(f"{row['hora_inicio']} - {row['hora_fim']}")
 
-                    col1.subheader(f"👤 {row['nome']}")
-                    col2.write(f"📅 {row['data'].strftime('%d/%m/%Y')}")
-                    col3.write(f"⏰ {row['hora_inicio']} - {row['hora_fim']}")
+                with st.expander("Ver detalhes"):
 
-                    with st.expander("🔽 Ver todos os dados"):
+                    st.write("Telefone:", row["telefone"])
+                    st.write("Email:", row["email"])
+                    st.write("CPF:", row["cpf"])
+                    st.write("Endereço:", row["logradouro"], row["numero"])
+                    st.write("Brinquedos:", row["brinquedos"])
+                    st.write("Obs:", row["observacao"])
 
-                        st.write("### 👤 Cliente")
-                        st.write(f"Telefone: {row['telefone']}")
-                        st.write(f"Email: {row['email']}")
-                        st.write(f"CPF: {row['cpf']}")
-                        st.write(f"RG: {row['rg']}")
-                        st.write(f"Como conheceu: {row['como_conheceu']}")
+                if status == "Pendente":
 
-                        st.write("### 📍 Endereço")
-                        st.write(f"{row['logradouro']}, {row['numero']}")
-                        st.write(f"{row['bairro']} - {row['cidade']}")
-                        st.write(f"CEP: {row['cep']}")
-                        st.write(f"Complemento: {row['complemento']}")
+                    colA, colB = st.columns(2)
 
-                        st.write("### 🎠 Evento")
-                        st.write(f"Brinquedos: {row['brinquedos']}")
-                        st.write(f"Observação: {row['observacao']}")
+                    # ===============================
+                    # APROVAR
+                    # ===============================
 
-                    if status == "Pendente":
+                    if colA.button("✅ Aprovar", key=f"aprovar_{row['id']}"):
 
-                        colA, colB = st.columns(2)
+                        nova_reserva = {
+                            "cliente": row["nome"],
+                            "brinquedos": row["brinquedos"],
+                            "data": str(row["data"].date()),
+                            "inicio_festa": str(row["hora_inicio"]),
+                            "fim_festa": str(row["hora_fim"]),
+                            "horario_entrega": "",
+                            "horario_retirada": "",
+                            "valor_total": 0,
+                            "sinal": 0,
+                            "falta": 0,
+                            "observacao": row["observacao"],
+                            "status": "Confirmada",
+                            "pagamentos": ""
+                        }
 
-                        if colA.button("✅ Aprovar", key=f"aprovar_{row['id']}"):
+                        reservas = pd.concat(
+                            [reservas, pd.DataFrame([nova_reserva])],
+                            ignore_index=True
+                        )
 
-                            nova_reserva = {
-                                "cliente": row["nome"],
-                                "brinquedos": row["brinquedos"],
-                                "data": str(row["data"].date()),
-                                "inicio_festa": str(row["hora_inicio"]),
-                                "fim_festa": str(row["hora_fim"]),
-                                "horario_entrega": "",
-                                "horario_retirada": "",
-                                "valor_total": 0,
-                                "sinal": 0,
-                                "falta": 0,
-                                "observacao": row["observacao"],
-                                "status": "Confirmada",
-                                "pagamentos": ""
-                            }
+                        salvar_dados(reservas, "reservas")
 
-                            reservas = pd.concat([reservas, pd.DataFrame([nova_reserva])])
-                            salvar_dados(reservas, "reservas")
+                        # salvar cliente
+                        cliente_existente = clientes[clientes["cpf"] == row["cpf"]]
 
-                            pre.loc[pre["id"] == row["id"], "status"] = "Aprovada"
+                        dados_cliente = {
+                            "nome": row["nome"],
+                            "telefone": row["telefone"],
+                            "email": row["email"],
+                            "tipo_cliente": "Pessoa Física",
+                            "rg": row["rg"],
+                            "cpf": row["cpf"],
+                            "logradouro": row["logradouro"],
+                            "numero": row["numero"],
+                            "bairro": row["bairro"],
+                            "cidade": row["cidade"],
+                            "cep": row["cep"],
+                            "observacao": row["observacao"]
+                        }
 
-                            pre = pre.drop_duplicates(subset="id", keep="last")
+                        if cliente_existente.empty:
 
-                            salvar_dados(pre, "pre_reservas")
+                            clientes = pd.concat(
+                                [clientes, pd.DataFrame([dados_cliente])],
+                                ignore_index=True
+                            )
 
-                            st.success("Reserva aprovada!")
-                            st.rerun()
+                        salvar_dados(clientes, "clientes")
 
-                        if colB.button("❌ Recusar", key=f"recusar_{row['id']}"):
+                        # criar nova pré-reserva aprovada
+                        registro = row.to_dict()
+                        registro["status"] = "Aprovada"
 
-                            pre.loc[pre["id"] == row["id"], "status"] = "Recusada"
+                        salvar_dados(
+                            pd.DataFrame([registro]),
+                            "pre_reservas"
+                        )
 
-                            pre = pre.drop_duplicates(subset="id", keep="last")
+                        # deletar registro antigo
+                        supabase.table("pre_reservas") \
+                            .delete() \
+                            .eq("id", row["id"]) \
+                            .execute()
 
-                            salvar_dados(pre, "pre_reservas")
+                        st.success("Reserva aprovada!")
+                        st.rerun()
 
-                            st.warning("Pré-reserva recusada.")
-                            st.rerun()
+                    # ===============================
+                    # RECUSAR
+                    # ===============================
 
-                    st.divider()
+                    if colB.button("❌ Recusar", key=f"recusar_{row['id']}"):
+
+                        registro = row.to_dict()
+                        registro["status"] = "Recusada"
+
+                        salvar_dados(
+                            pd.DataFrame([registro]),
+                            "pre_reservas"
+                        )
+
+                        supabase.table("pre_reservas") \
+                            .delete() \
+                            .eq("id", row["id"]) \
+                            .execute()
+
+                        st.warning("Pré-reserva recusada.")
+                        st.rerun()
+
+                st.divider()
 
 # ======================================
 # PÁGINA: Funcionários (Supabase)
@@ -3751,6 +3750,7 @@ else:
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
 
