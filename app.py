@@ -3061,7 +3061,7 @@ def pagina_pre_reservas():
 
 
                 # EXCLUIR
-                    if b3.button("🗑 Excluir", key=f"excluir_{idx}"):
+                    if colC.button("🗑 Excluir", key=f"excluir_{idx}"):
 
                         # remove a linha
                         pre = pre.drop(idx)
@@ -3758,6 +3758,7 @@ else:
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
 
