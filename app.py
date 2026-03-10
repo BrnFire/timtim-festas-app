@@ -2891,7 +2891,6 @@ def salvar_foto_imediato(foto_bytes: bytes, nome_hint: str, ext: str = ".jpg") -
     rel = destino.relative_to(Path(__file__).parent if "__file__" in globals() else Path.cwd())
     return rel.as_posix()
 
-
 # ======================================
 # PÁGINA: PRÉ-RESERVAS
 # ======================================
@@ -3746,6 +3745,7 @@ else:
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
 
