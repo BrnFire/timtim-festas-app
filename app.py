@@ -2950,8 +2950,6 @@ def pagina_pre_reservas():
     pre["data"] = pd.to_datetime(pre["data"], errors="coerce")
     pre = pre.sort_values("data")
 
-    hoje = pd.Timestamp.today().normalize()
-
     pendentes = len(pre[pre["status"] == "Pendente"])
     aprovadas = len(pre[pre["status"] == "Aprovada"])
     recusadas = len(pre[pre["status"] == "Recusada"])
@@ -3052,7 +3050,10 @@ def pagina_pre_reservas():
 
                         colA, colB = st.columns(2)
 
+                        # ===============================
                         # APROVAR
+                        # ===============================
+
                         if colA.button("✅ Aprovar", key=f"aprovar_{row['id']}"):
 
                             nova_reserva = {
@@ -3081,7 +3082,10 @@ def pagina_pre_reservas():
 
                             salvar_dados(reservas, "reservas")
 
-                            # CLIENTE
+                            # ===============================
+                            # SALVAR / ATUALIZAR CLIENTE
+                            # ===============================
+
                             cliente_existente = clientes[
                                 clientes["cpf"] == row["cpf"]
                             ]
@@ -3120,19 +3124,35 @@ def pagina_pre_reservas():
 
                             salvar_dados(clientes, "clientes")
 
-                            # ATUALIZAR STATUS
-                            pre.at[idx, "status"] = "Aprovada"
-                            salvar_dados(pre, "pre_reservas")
+                            # ===============================
+                            # ATUALIZAR STATUS (SEM DUPLICAR)
+                            # ===============================
+
+                            salvar_dados(
+                                pd.DataFrame([{
+                                    "id": row["id"],
+                                    "status": "Aprovada"
+                                }]),
+                                "pre_reservas"
+                            )
 
                             st.success("Reserva aprovada!")
 
                             st.rerun()
 
+                        # ===============================
                         # RECUSAR
+                        # ===============================
+
                         if colB.button("❌ Recusar", key=f"recusar_{row['id']}"):
 
-                            pre.at[idx, "status"] = "Recusada"
-                            salvar_dados(pre, "pre_reservas")
+                            salvar_dados(
+                                pd.DataFrame([{
+                                    "id": row["id"],
+                                    "status": "Recusada"
+                                }]),
+                                "pre_reservas"
+                            )
 
                             st.warning("Pré-reserva recusada.")
 
@@ -3825,6 +3845,7 @@ else:
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
 
