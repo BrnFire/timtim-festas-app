@@ -2891,7 +2891,6 @@ def salvar_foto_imediato(foto_bytes: bytes, nome_hint: str, ext: str = ".jpg") -
     rel = destino.relative_to(Path(__file__).parent if "__file__" in globals() else Path.cwd())
     return rel.as_posix()
 
-
 # ======================================
 # PÁGINA: PRÉ-RESERVAS
 # ======================================
@@ -3083,7 +3082,7 @@ def pagina_pre_reservas():
                             salvar_dados(reservas, "reservas")
 
                             # ===============================
-                            # SALVAR / ATUALIZAR CLIENTE
+                            # CLIENTE
                             # ===============================
 
                             cliente_existente = clientes[
@@ -3125,14 +3124,14 @@ def pagina_pre_reservas():
                             salvar_dados(clientes, "clientes")
 
                             # ===============================
-                            # ATUALIZAR STATUS (SEM DUPLICAR)
+                            # ATUALIZAR STATUS PRE-RESERVA
                             # ===============================
 
+                            registro_update = row.to_dict()
+                            registro_update["status"] = "Aprovada"
+
                             salvar_dados(
-                                pd.DataFrame([{
-                                    "id": row["id"],
-                                    "status": "Aprovada"
-                                }]),
+                                pd.DataFrame([registro_update]),
                                 "pre_reservas"
                             )
 
@@ -3146,11 +3145,11 @@ def pagina_pre_reservas():
 
                         if colB.button("❌ Recusar", key=f"recusar_{row['id']}"):
 
+                            registro_update = row.to_dict()
+                            registro_update["status"] = "Recusada"
+
                             salvar_dados(
-                                pd.DataFrame([{
-                                    "id": row["id"],
-                                    "status": "Recusada"
-                                }]),
+                                pd.DataFrame([registro_update]),
                                 "pre_reservas"
                             )
 
@@ -3159,7 +3158,6 @@ def pagina_pre_reservas():
                             st.rerun()
 
                     st.divider()
-
 
 
 # ======================================
@@ -3845,6 +3843,7 @@ else:
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
 
