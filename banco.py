@@ -2,19 +2,16 @@
 from __future__ import annotations
 
 import logging
-import os
-import json
-import re
-from datetime import date, datetime
 from typing import Dict, Any, List, Optional
 
 import pandas as pd
+import re
 import requests
 
 # Usa streamlit se existir; senão, cria um "dummy" pra não quebrar em testes locais
 try:
     import streamlit as st
-except Exception:  # pragma: no cover
+except Exception:
     class _Dummy:
         def __getattr__(self, name):
             def _(*args, **kwargs):
@@ -22,24 +19,13 @@ except Exception:  # pragma: no cover
             return _
     st = _Dummy()  # type: ignore
 
-# Importa o wrapper REST já existente no projeto
+# Importa o wrapper REST que você criou
 from supabase_rest import (
     table_select,
     table_insert,
     table_update,
     table_delete,
-    # table_upsert,  # <<< não vamos usar para evitar TypeError e duplicações
-)
-
-# ===================================================
-# CONFIG — tabelas nas quais sincronizamos deleções
-# ===================================================
-
-# Por padrão, SOMENTE pre_reservas fará deleção de IDs ausentes no df.
-# Você pode sobrescrever via variável de ambiente, ex.: SYNC_DELETE_TABLES=pre_reservas,reservas
-_env_whitelist = os.getenv("SYNC_DELETE_TABLES", "pre_reservas")
-SYNC_DELETE_TABLES: set[str] = set(
-    [t.strip().lower() for t in _env_whitelist.split(",") if t.strip()]
+    table_upsert,
 )
 
 # ===================================================
@@ -56,40 +42,12 @@ def _tabela_from_nome_arquivo(nome: str) -> str:
         base = base[:-4]
     return base.lower()
 
+
 def _chunked(iterable: List[Dict[str, Any]], size: int = 500):
     """Gera blocos (chunks) para upload em lotes."""
     for i in range(0, len(iterable), size):
         yield iterable[i:i + size]
 
-# ===================================================
-# NORMALIZAÇÃO
-# ===================================================
-
-def _normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    """Converte datas para ISO (yyyy-mm-dd) e NaN -> None."""
-    df = df.copy()
-    for col in df.columns:
-        if pd.api.types.is_datetime64_any_dtype(df[col]):
-            df[col] = df[col].dt.strftime("%Y-%m-%d")
-        elif df[col].dtype == object:
-            df[col] = df[col].apply(
-                lambda x: x.strftime("%Y-%m-%d")
-                if isinstance(x, (date, datetime))
-                else x
-            )
-    # NaN -> None
-    df = df.where(pd.notnull(df), None)
-    return df
-
-def _stringify_or_none(v: Any) -> Optional[str]:
-    """Transforma valores 'vazios' em None; do contrário, string."""
-    if v in (None, "", "None", "nan", "NaN"):
-        return None
-    try:
-        s = str(v)
-        return None if s.strip() == "" else s
-    except Exception:
-        return None
 
 # ===================================================
 # ENSURE COLUMNS (com defaults)
@@ -115,6 +73,7 @@ def _ensure_columns(
             df[c] = defaults.get(c, "")
     return df[colunas].reset_index(drop=True)
 
+
 # ===================================================
 # PRINCIPAIS FUNÇÕES DE I/O (USANDO supabase_rest)
 # ===================================================
@@ -132,7 +91,6 @@ def carregar_dados(nome_arquivo_ou_tabela: str, colunas: List[str]) -> pd.DataFr
         if dados:
             df = pd.DataFrame(dados)
         else:
-            # aviso leve (não quebra telas)
             st.warning(f"⚠️ Nenhum dado retornado da tabela '{tabela}'.")
     except Exception as e:
         logging.exception("Erro ao carregar dados da tabela %s", tabela)
@@ -140,118 +98,65 @@ def carregar_dados(nome_arquivo_ou_tabela: str, colunas: List[str]) -> pd.DataFr
 
     return _ensure_columns(df, colunas)
 
-def salvar_dados(df: pd.DataFrame, nome_tabela: str) -> None:
-    """
-    Sincroniza o conteúdo do DataFrame com a tabela do Supabase.
 
-    Regras:
-    - Se a tabela tiver coluna 'id':
-        * Normaliza datas e NaN.
-        * Padroniza 'id' como string (ou None).
-        * Dedup por 'id' (mantém a última).
-        * (Opcional) Deleção: se tabela estiver em SYNC_DELETE_TABLES,
-          deleta IDs existentes no banco que não estão no df.
-        * Para cada linha do df:
-            - id None/vazio -> INSERT.
-            - id existente no banco -> UPDATE.
-            - id inexistente no banco -> INSERT.
-    - Se NÃO tiver 'id':
-        * Insere em lote (sem deletar).
+def salvar_dados(df, nome_tabela):
     """
+    Salva um DataFrame no Supabase usando UPSERT linha a linha.
+    Não apaga a tabela inteira.
+    """
+
+    import json
+    from datetime import date, datetime
+
     tabela = _tabela_from_nome_arquivo(nome_tabela)
-    df = _normalize_dataframe(df)
 
-    tem_id = "id" in df.columns
+    # --- Normalização ---
+    df = df.copy()
 
-    if tem_id:
-        # padroniza id e elimina duplicadas por id no df
-        df["id"] = df["id"].apply(_stringify_or_none)
-        df = df.drop_duplicates(subset=["id"], keep="last")
+    # Datas → string
+    for col in df.columns:
+        if pd.api.types.is_datetime64_any_dtype(df[col]):
+            df[col] = df[col].dt.strftime("%Y-%m-%d")
+        elif df[col].dtype == object:
+            df[col] = df[col].apply(
+                lambda x: x.strftime("%Y-%m-%d")
+                if isinstance(x, (date, datetime))
+                else x
+            )
 
-    # -----------------------
-    # Sem 'id' -> compatibilidade
-    # -----------------------
-    if not tem_id:
-        registros = df.to_dict(orient="records")
-        for chunk in _chunked(registros, 500):
-            table_insert(tabela, chunk)
-        st.toast(f"💾 {len(registros)} registro(s) inseridos em '{tabela}'.", icon="✅")
-        return
+    # Remove NaN → None
+    df = df.where(pd.notnull(df), None)
 
-    # -----------------------
-    # Com 'id' -> sync + update/insert por linha
-    # -----------------------
-    # 1) Buscar IDs do banco
-    try:
-        atuais = table_select(tabela)  # ideal: table_select(tabela, columns=['id'])
-        df_atuais = pd.DataFrame(atuais) if atuais else pd.DataFrame(columns=["id"])
-        if "id" not in df_atuais.columns:
-            df_atuais["id"] = None
-        df_atuais["id"] = df_atuais["id"].apply(_stringify_or_none)
-    except Exception as e:
-        logging.exception("Erro ao ler '%s' para sincronização: %s", tabela, e)
-        st.error(f"❌ Erro ao ler '{tabela}' para salvar: {e}")
-        return
+    # Corrige ID
+    if "id" in df.columns:
+        df = df.drop(columns=["id"])
 
-    ids_no_banco = set([x for x in df_atuais["id"].dropna().tolist()])
-    ids_no_df    = set([x for x in df["id"].dropna().tolist()])
-
-    # 2) EXCLUSÕES (somente para tabelas em whitelist)
-    deletados = 0
-    if tabela in SYNC_DELETE_TABLES:
-        ids_para_deletar = sorted(ids_no_banco - ids_no_df)
-        for pid in ids_para_deletar:
-            try:
-                table_delete(tabela, {"id": pid})
-                deletados += 1
-            except Exception as e:
-                logging.exception("Erro ao deletar id=%s em %s: %s", pid, tabela, e)
-                st.error(f"❌ Erro ao deletar id={pid} em '{tabela}': {e}")
-
-    # 3) UPDATE/INSERT linha a linha
     registros = df.to_dict(orient="records")
-    atualizados = 0
-    inseridos = 0
 
+    # --- SALVA LINHA A LINHA ---
     for reg in registros:
-        # garante json serializável
-        json.dumps(reg)
-
-        rid = reg.get("id", None)
-
-        if rid is None:
-            # INSERT sem id -> deixa o banco gerar UUID (se houver default)
-            try:
-                table_insert(tabela, [reg])
-                inseridos += 1
-            except Exception as e:
-                logging.exception("Erro ao inserir em %s: %s | registro=%s", tabela, e, reg)
-                st.error(f"❌ Erro ao inserir em '{tabela}': {e}")
+        # Se o ID estiver vazio, PULA para não quebrar o Supabase
+        if "id" in reg and (reg["id"] is None):
+            print("⚠️ Linha ignorada por ID vazio:", reg)
             continue
 
-        # com id
-        if rid in ids_no_banco:
-            # UPDATE quando o id já existe no banco
-            try:
-                table_update(tabela, {"id": rid}, reg)
-                atualizados += 1
-            except Exception as e:
-                logging.exception("Erro ao atualizar id=%s em %s: %s | registro=%s", rid, tabela, e, reg)
-                st.error(f"❌ Erro ao atualizar id={rid} em '{tabela}': {e}")
-        else:
-            # INSERT quando o id ainda não existe no banco
-            try:
-                table_insert(tabela, [reg])
-                inseridos += 1
-            except Exception as e:
-                logging.exception("Erro ao inserir (novo id=%s) em %s: %s | registro=%s", rid, tabela, e, reg)
-                st.error(f"❌ Erro ao inserir id={rid} em '{tabela}': {e}")
+        # Garantir JSON válido
+        json.dumps(reg)
 
-    # 4) Feedback
-    st.toast(
-        f"💾 {tabela}: {atualizados} atualizado(s), {inseridos} inserido(s), {deletados} excluído(s).",
-        icon="✅"
-    )
+        # Upsert por linha
+        try:
+            table_upsert(tabela, [reg])
+        except Exception as e:
+            st.error(f"❌ Erro ao salvar registro {reg}: {e}")
+            raise
+
+    print(f"✅ Tabela '{tabela}' salva com {len(registros)} registros.")
+
+
+
+
+
+
 
 # ===================================================
 # FUNÇÕES AUXILIARES (INSERIR / ATUALIZAR / DELETAR)
@@ -268,6 +173,7 @@ def inserir_um(tabela_ou_csv: str, registro: Dict[str, Any]) -> None:
         st.error(f"❌ Erro ao inserir em '{tabela}': {e}")
         raise
 
+
 def atualizar_um(tabela_ou_csv: str, filtro: Dict[str, Any], campos: Dict[str, Any]) -> None:
     """Atualiza registros que casam com 'filtro'."""
     tabela = _tabela_from_nome_arquivo(tabela_ou_csv)
@@ -278,7 +184,6 @@ def atualizar_um(tabela_ou_csv: str, filtro: Dict[str, Any], campos: Dict[str, A
         logging.exception("Erro em atualizar_um(%s)", tabela)
         st.error(f"❌ Erro ao atualizar '{tabela}': {e}")
         raise
-
 def atualizar_por_filtro(tabela_ou_csv: str, novos_dados: dict, filtro: dict) -> None:
     """
     Atualiza registros conforme filtro (WHERE).
@@ -286,12 +191,14 @@ def atualizar_por_filtro(tabela_ou_csv: str, novos_dados: dict, filtro: dict) ->
     """
     tabela = _tabela_from_nome_arquivo(tabela_ou_csv)
     try:
+        # table_update(tabela, where=filtro, values=novos_dados)
         table_update(tabela, filtro, novos_dados)
         st.toast("🔄 Registro atualizado!", icon="✅")
     except Exception as e:
         logging.exception("Erro em atualizar_por_filtro(%s)", tabela)
         st.error(f"❌ Erro ao atualizar '{tabela}': {e}")
         raise
+
 
 def deletar_por_filtro(tabela_ou_csv: str, filtro: Dict[str, Any]) -> None:
     """Deleta registros que casem com o filtro informado."""
@@ -303,6 +210,7 @@ def deletar_por_filtro(tabela_ou_csv: str, filtro: Dict[str, Any]) -> None:
         logging.exception("Erro em deletar_por_filtro(%s)", tabela)
         st.error(f"❌ Erro ao excluir em '{tabela}': {e}")
         raise
+
 
 # ===================================================
 # FUNÇÃO EXTRA — DISTÂNCIA ENTRE CEPs
@@ -336,16 +244,13 @@ def calcular_distancia_km(cep_origem, cep_destino):
         if not origem or not destino:
             return None
 
-        try:
-            from geopy.distance import geodesic
-        except Exception:
-            return None  # se geopy não estiver instalado
-
+        from geopy.distance import geodesic
         return round(geodesic(origem, destino).km, 1)
 
-    except Exception as e:  # pragma: no cover
+    except Exception as e:
         print(f"Erro ao calcular distância: {e}")
         return None
+
 
 # ===================================================
 # ✅ COMPATIBILIDADE — Alias para função antiga
