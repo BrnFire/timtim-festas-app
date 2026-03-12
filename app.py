@@ -2900,7 +2900,7 @@ def salvar_foto_imediato(foto_bytes: bytes, nome_hint: str, ext: str = ".jpg") -
 # PÁGINA: PRÉ-RESERVAS
 # ======================================
 
-from banco import carregar_dados, salvar_dados
+from banco import carregar_dados, salvar_dados, atualizar_por_filtro, deletar_por_filtro
 import pandas as pd
 import streamlit as st
 
@@ -2912,7 +2912,6 @@ def pagina_pre_reservas():
     # ===============================
     # CARREGAR DADOS
     # ===============================
-
     pre = carregar_dados(
         "pre_reservas",
         [
@@ -2924,19 +2923,18 @@ def pagina_pre_reservas():
     )
 
     reservas = carregar_dados("reservas", ["*"])
-    # clientes = carregar_dados("clientes", ["*"])  # se precisar, descomente
+    # clientes = carregar_dados("clientes", ["*"])  # se precisar mais tarde
 
     if pre.empty:
         st.warning("⚠️ Nenhuma pré-reserva encontrada.")
         return
 
     # ===============================
-    # NORMALIZAR TIPOS E STATUS
+    # NORMALIZAR TIPOS/STATUS
     # ===============================
-    # (evita duplicação por falha de comparação e garante contagens corretas)
     pre["id"] = pre["id"].astype(str)
 
-    # normaliza status (tira espaços e padroniza capitalização)
+    # Normalização leve de status para contadores/abas (opcional)
     pre["status"] = (
         pre["status"]
         .fillna("")
@@ -2955,7 +2953,7 @@ def pagina_pre_reservas():
     )
 
     # ===============================
-    # FORMATAR DATA
+    # FORMATAR/ORDENAR POR DATA
     # ===============================
     pre["data"] = pd.to_datetime(pre["data"], errors="coerce")
     if "hora_inicio" in pre.columns:
@@ -2966,13 +2964,12 @@ def pagina_pre_reservas():
     # ===============================
     # INDICADORES
     # ===============================
-    pendentes = len(pre[pre["status"] == "Pendente"])
-    aprovadas = len(pre[pre["status"] == "Aprovada"])
-    recusadas = len(pre[pre["status"] == "Recusada"])
+    pendentes = (pre["status"] == "Pendente").sum()
+    aprovadas = (pre["status"] == "Aprovada").sum()
+    recusadas = (pre["status"] == "Recusada").sum()
     total = len(pre)
 
     c1, c2, c3, c4 = st.columns(4)
-
     c1.metric("📊 Total", total)
     c2.metric("🟡 Pendentes", pendentes)
     c3.metric("🟢 Aprovadas", aprovadas)
@@ -2984,12 +2981,7 @@ def pagina_pre_reservas():
     # ABAS
     # ===============================
     aba1, aba2, aba3 = st.tabs(["🟡 Pendentes", "🟢 Aprovadas", "🔴 Recusadas"])
-
-    abas = {
-        aba1: "Pendente",
-        aba2: "Aprovada",
-        aba3: "Recusada"
-    }
+    abas = {aba1: "Pendente", aba2: "Aprovada", aba3: "Recusada"}
 
     # ===============================
     # LISTAGEM
@@ -3003,19 +2995,18 @@ def pagina_pre_reservas():
                 st.info("Nenhuma reserva nesta categoria.")
                 continue
 
-            # enumerate para chaves únicas por linha
+            # enumerate -> chaves únicas por linha
             for i, (idx, row) in enumerate(df.iterrows()):
                 rid = str(row["id"])
 
                 col1, col2, col3 = st.columns(3)
-
                 col1.subheader(row.get("nome", "Sem nome"))
-                # evita erro se a data for NaT
                 data_str = row["data"].strftime("%d/%m/%Y") if not pd.isna(row["data"]) else "—"
                 col2.write(data_str)
                 col3.write(f"{row.get('hora_inicio', '—')} - {row.get('hora_fim', '—')}")
 
                 with st.expander("Ver detalhes"):
+                    st.write("ID:", rid)
                     st.write("Telefone:", row.get("telefone", "—"))
                     st.write("Email:", row.get("email", "—"))
                     st.write("CPF:", row.get("cpf", "—"))
@@ -3026,16 +3017,13 @@ def pagina_pre_reservas():
                 # ===============================
                 # BOTÕES
                 # ===============================
-
                 if status == "Pendente":
                     colA, colB, colC = st.columns(3)
 
-                    # ===============================
                     # APROVAR
-                    # ===============================
                     if colA.button("✅ Aprovar", key=f"aprovar_{rid}_{i}"):
 
-                        # criar reserva
+                        # 1) cria reserva localmente
                         nova_reserva = {
                             "cliente": row.get("nome"),
                             "brinquedos": row.get("brinquedos"),
@@ -3044,56 +3032,39 @@ def pagina_pre_reservas():
                             "fim_festa": str(row.get("hora_fim", "")),
                             "status": "Confirmada"
                         }
+                        reservas = pd.concat([reservas, pd.DataFrame([nova_reserva])], ignore_index=True)
+                        salvar_dados(reservas, "reservas")  # mantém seu fluxo
 
-                        reservas = pd.concat(
-                            [reservas, pd.DataFrame([nova_reserva])],
-                            ignore_index=True
-                        )
-                        salvar_dados(reservas, "reservas")
-
-                        # atualizar status (sem remover/concat → evita duplicar)
-                        mask = (pre["id"] == rid)
-                        pre.loc[mask, "status"] = "Aprovada"
-
-                        salvar_dados(pre, "pre_reservas")
+                        # 2) atualiza status DIRETO no banco (sem mexer no df local)
+                        atualizar_por_filtro("pre_reservas", {"status": "Aprovada"}, {"id": rid})
 
                         st.success("Reserva aprovada!")
                         st.rerun()
 
-                    # ===============================
                     # RECUSAR
-                    # ===============================
                     if colB.button("❌ Recusar", key=f"recusar_{rid}_{i}"):
 
-                        # atualizar status (sem remover/concat → evita duplicar)
-                        mask = (pre["id"] == rid)
-                        pre.loc[mask, "status"] = "Recusada"
-
-                        salvar_dados(pre, "pre_reservas")
+                        # Atualiza apenas o status direto no banco
+                        atualizar_por_filtro("pre_reservas", {"status": "Recusada"}, {"id": rid})
 
                         st.warning("Pré-reserva recusada.")
                         st.rerun()
 
-                    # ===============================
-                    # EXCLUIR (também disponível aqui)
-                    # ===============================
+                    # EXCLUIR
                     if colC.button("🗑 Excluir", key=f"excluir_{rid}_{i}"):
 
-                        # remove por ID (robusto)
-                        pre = pre[pre["id"] != rid]
-
-                        salvar_dados(pre, "pre_reservas")
+                        # Deleta direto no banco
+                        deletar_por_filtro("pre_reservas", {"id": rid})
 
                         st.warning("Pré-reserva excluída.")
                         st.rerun()
 
                 else:
-                    # EXCLUIR também nas abas Aprovadas/Recusadas
+                    # EXCLUIR nas abas Aprovadas/Recusadas
                     colX = st.columns(1)[0]
                     if colX.button("🗑 Excluir", key=f"excluir_{rid}_{status}_{i}"):
 
-                        pre = pre[pre["id"] != rid]
-                        salvar_dados(pre, "pre_reservas")
+                        deletar_por_filtro("pre_reservas", {"id": rid})
 
                         st.warning("Pré-reserva excluída.")
                         st.rerun()
@@ -3784,6 +3755,7 @@ else:
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
 
