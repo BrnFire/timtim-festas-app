@@ -3130,25 +3130,6 @@ def pagina_pre_reservas():
                             st.error(f"Erro ao recusar: {e}")
                         st.rerun()
 
-                    # 🗑 EXCLUIR (já OK)
-                    if colC.button("🗑 Excluir", key=f"excluir_{rid}_{i}"):
-                        try:
-                            deletar_por_filtro("pre_reservas", {"id": rid})
-                            st.warning("Pré-reserva excluída.")
-                        except Exception as e:
-                            st.error(f"Erro ao excluir: {e}")
-                        st.rerun()
-
-                else:
-                    # EXCLUIR também nas abas Aprovadas/Recusadas
-                    colX = st.columns(1)[0]
-                    if colX.button("🗑 Excluir", key=f"excluir_{rid}_{status}_{i}"):
-                        try:
-                            deletar_por_filtro("pre_reservas", {"id": rid})
-                            st.warning("Pré-reserva excluída.")
-                        except Exception as e:
-                            st.error(f"Erro ao excluir: {e}")
-                        st.rerun()
 
                 st.divider()
 
@@ -3836,6 +3817,7 @@ else:
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
 
