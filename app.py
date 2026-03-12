@@ -2894,15 +2894,45 @@ def salvar_foto_imediato(foto_bytes: bytes, nome_hint: str, ext: str = ".jpg") -
 
 
 # ======================================
-# PÁGINA: PRÉ-RESERVAS (robusta)
+# PÁGINA: PRÉ-RESERVAS (Supabase direto)
 # ======================================
 
-from banco import carregar_dados, salvar_dados
+import os
 import pandas as pd
 import streamlit as st
+from supabase import create_client  # pip install supabase
+
+from banco import carregar_dados  # <-- permanece igual, não tocamos no banco.py
+
 
 # ----------------------------
-# Constantes/colunas esperadas
+# Conexão local ao Supabase
+# (somente para ações; leitura segue via banco.py)
+# ----------------------------
+def _sb():
+    url = os.environ.get("SUPABASE_URL")
+    key = os.environ.get("SUPABASE_KEY")
+    if not url or not key:
+        raise RuntimeError("SUPABASE_URL / SUPABASE_KEY não definidos nas variáveis de ambiente.")
+    return create_client(url, key)
+
+def sb_pre_update_status(pre_id: str, novo_status: str):
+    sb = _sb()
+    # Atualiza TODAS as linhas com esse id (se houver duplicadas, todas ficam consistentes)
+    return sb.table("pre_reservas").update({"status": novo_status}).eq("id", str(pre_id)).execute()
+
+def sb_pre_delete(pre_id: str):
+    sb = _sb()
+    # Deleta TODAS as linhas com esse id (se houver duplicadas, some tudo)
+    return sb.table("pre_reservas").delete().eq("id", str(pre_id)).execute()
+
+def sb_reservas_insert(nova_reserva: dict):
+    sb = _sb()
+    return sb.table("reservas").insert(nova_reserva).execute()
+
+
+# ----------------------------
+# Colunas esperadas
 # ----------------------------
 COLS_PRE = [
     "id","nome","telefone","email","rg","cpf",
@@ -2911,101 +2941,48 @@ COLS_PRE = [
     "data","hora_inicio","hora_fim","brinquedos","status"
 ]
 
-# ===========================
-# Utilitários robustos de IO
-# ===========================
-def carregar_pre():
-    df = carregar_dados("pre_reservas", COLS_PRE)
+
+# ----------------------------
+# Carregar pré-reservas (UI)
+# - Continua usando banco.py
+# - Faz dedup por id na UI
+# ----------------------------
+def _carregar_pre_dedup():
+    df = carregar_dados("pre_reservas", ["*"])  # pega tudo
     if df is None or df.empty:
         return pd.DataFrame(columns=COLS_PRE)
 
-    # Tipos consistentes
-    if "id" in df.columns:
-        df["id"] = df["id"].astype(str)
+    # Normaliza/garante colunas
+    for c in COLS_PRE:
+        if c not in df.columns:
+            df[c] = None
+
+    df["id"] = df["id"].astype(str)
+
+    # Converte data se existir
     if "data" in df.columns:
         df["data"] = pd.to_datetime(df["data"], errors="coerce")
 
-    # Dedup por id (mantém o último)
+    # 1) Ordena para escolher "a última" por id
+    #    Preferimos created_at se existir. Senão, ordena por data + hora_inicio.
+    if "created_at" in df.columns:
+        df = df.sort_values(by=["created_at"], ascending=True)  # keep='last' vai pegar a mais recente
+    elif "data" in df.columns and "hora_inicio" in df.columns:
+        df = df.sort_values(by=["data", "hora_inicio"], ascending=[True, True])
+    elif "data" in df.columns:
+        df = df.sort_values(by=["data"], ascending=True)
+
+    # 2) Dedup por id, mantendo a "última" conforme ordenação acima
     df = df.drop_duplicates(subset=["id"], keep="last")
 
-    # Ordenação
-    if "hora_inicio" in df.columns:
+    # 3) Ordenação final para exibição
+    if "data" in df.columns and "hora_inicio" in df.columns:
         df = df.sort_values(by=["data", "hora_inicio"], ascending=[True, True])
-    else:
-        df = df.sort_values(by=["data"])
+    elif "data" in df.columns:
+        df = df.sort_values(by=["data"], ascending=True)
 
-    return df.reset_index(drop=True)
-
-
-def salvar_pre(df: pd.DataFrame):
-    # Padroniza e dedup ANTES de salvar
-    df = df.copy()
-    if "id" in df.columns:
-        df["id"] = df["id"].astype(str)
-        df = df.drop_duplicates(subset=["id"], keep="last")
-    # >>> IMPORTANTE: salvar_dados deve SUBSTITUIR o conjunto, não acrescentar <<<
-    salvar_dados(df, "pre_reservas")
-
-
-def carregar_reservas():
-    df = carregar_dados("reservas", ["*"])
-    if df is None or df.empty:
-        return pd.DataFrame(columns=["cliente","brinquedos","data","inicio_festa","fim_festa","status"])
-    return df.reset_index(drop=True)
-
-
-def salvar_reservas(df: pd.DataFrame):
-    salvar_dados(df, "reservas")
-
-
-# ===============================
-# Operações atômicas por função
-# ===============================
-def op_atualizar_status(pre_id: str, novo_status: str):
-    pre_id = str(pre_id)
-    df = carregar_pre()
-    mask = (df["id"] == pre_id)
-    if not mask.any():
-        raise ValueError(f"ID {pre_id} não encontrado para atualizar status.")
-
-    df.loc[mask, "status"] = novo_status
-    salvar_pre(df)
-
-
-def op_excluir(pre_id: str):
-    pre_id = str(pre_id)
-    df = carregar_pre()
-    antes = len(df)
-    df = df[df["id"] != pre_id]
-    depois = len(df)
-
-    if antes == depois:
-        raise ValueError(f"ID {pre_id} não encontrado para exclusão.")
-
-    salvar_pre(df)
-
-    # Verificação pós-salvar (guard rail)
-    df_check = carregar_pre()
-    if (df_check["id"] == pre_id).any():
-        raise RuntimeError(f"Falha na exclusão: id {pre_id} ainda presente após salvar.")
-
-
-def op_aprovar(row: pd.Series):
-    # 1) Criar reserva
-    reservas = carregar_reservas()
-    nova_reserva = {
-        "cliente": row.get("nome"),
-        "brinquedos": row.get("brinquedos"),
-        "data": str(pd.to_datetime(row.get("data")).date()) if not pd.isna(row.get("data")) else "",
-        "inicio_festa": str(row.get("hora_inicio", "")),
-        "fim_festa": str(row.get("hora_fim", "")),
-        "status": "Confirmada"
-    }
-    reservas = pd.concat([reservas, pd.DataFrame([nova_reserva])], ignore_index=True)
-    salvar_reservas(reservas)
-
-    # 2) Atualizar status para Aprovada
-    op_atualizar_status(str(row["id"]), "Aprovada")
+    # Só retorna as colunas usadas na página
+    return df[COLS_PRE].reset_index(drop=True)
 
 
 # ============
@@ -3015,26 +2992,19 @@ def pagina_pre_reservas():
 
     st.header("📅 Gerenciar Pré-Reservas")
 
-    # -----------------------
-    # Barra lateral / Debug
-    # -----------------------
     debug = st.sidebar.checkbox("🔧 Modo debug")
-    if st.sidebar.button("🧹 Deduplicar pré-reservas (por id)"):
-        df_tmp = carregar_pre()
-        salvar_pre(df_tmp)
-        st.sidebar.success("Pré-reservas deduplicadas por id.")
 
-    # -----------------------
-    # Carregar dados
-    # -----------------------
-    pre = carregar_pre()
+    # ===============================
+    # CARREGAR DADOS (dedup na UI)
+    # ===============================
+    pre = _carregar_pre_dedup()
     if pre.empty:
         st.warning("⚠️ Nenhuma pré-reserva encontrada.")
         return
 
-    # -----------------------
-    # Indicadores
-    # -----------------------
+    # ===============================
+    # INDICADORES
+    # ===============================
     pendentes = (pre["status"] == "Pendente").sum()
     aprovadas = (pre["status"] == "Aprovada").sum()
     recusadas = (pre["status"] == "Recusada").sum()
@@ -3048,9 +3018,9 @@ def pagina_pre_reservas():
 
     st.divider()
 
-    # -----------------------
-    # Abas por status
-    # -----------------------
+    # ===============================
+    # ABAS
+    # ===============================
     aba1, aba2, aba3 = st.tabs(["🟡 Pendentes", "🟢 Aprovadas", "🔴 Recusadas"])
     abas = {aba1: "Pendente", aba2: "Aprovada", aba3: "Recusada"}
 
@@ -3062,13 +3032,12 @@ def pagina_pre_reservas():
         except Exception:
             return "—"
 
-    # -----------------------
-    # Listagem
-    # -----------------------
+    # ===============================
+    # LISTAGEM POR STATUS
+    # ===============================
     for aba, status in abas.items():
         with aba:
             df = pre[pre["status"] == status]
-
             if df.empty:
                 st.info("Nenhuma reserva nesta categoria.")
                 continue
@@ -3076,12 +3045,13 @@ def pagina_pre_reservas():
             for _, row in df.iterrows():
                 rid = str(row["id"])
 
-                # Card
+                # Cabeçalho do card
                 col1, col2, col3 = st.columns(3)
                 col1.subheader(row.get("nome", "Sem nome"))
                 col2.write(_fmt_data(row.get("data")))
                 col3.write(f"{row.get('hora_inicio', '—')} - {row.get('hora_fim', '—')}")
 
+                # Detalhes
                 with st.expander("Ver detalhes"):
                     st.write("ID:", rid)
                     st.write("Telefone:", row.get("telefone", "—"))
@@ -3090,17 +3060,10 @@ def pagina_pre_reservas():
                     st.write("Endereço:", f"{row.get('logradouro', '—')} {row.get('numero', '')}".strip())
                     st.write("Brinquedos:", row.get("brinquedos", "—"))
                     st.write("Observação:", row.get("observacao", "—"))
-
                     if debug:
-                        # Mostrar quantas linhas existem para esse id
-                        df_all = carregar_pre()
-                        qtd = (df_all["id"] == rid).sum()
-                        st.caption(f"DEBUG: id={rid} | status={row.get('status')} | linhas_com_mesmo_id={qtd}")
+                        st.caption(f"DEBUG: status={row.get('status')}")
 
-                # -----------------------
-                # Formulário por item
-                # (evita colisões de botões)
-                # -----------------------
+                # Ações com formulário (evita colisão)
                 with st.form(key=f"form_{rid}_{status}"):
                     if status == "Pendente":
                         b1, b2, b3 = st.columns(3)
@@ -3108,47 +3071,46 @@ def pagina_pre_reservas():
                         recusar = b2.form_submit_button("❌ Recusar")
                         excluir = b3.form_submit_button("🗑 Excluir")
                     else:
-                        b1, b2 = st.columns([1, 3])
+                        b1, _ = st.columns([1, 3])
                         aprovar = False
                         recusar = False
                         excluir = b1.form_submit_button("🗑 Excluir")
 
                     if aprovar:
                         try:
-                            op_aprovar(row)
+                            # 1) cria reserva direto no Supabase
+                            nova_reserva = {
+                                "cliente": row.get("nome"),
+                                "brinquedos": row.get("brinquedos"),
+                                "data": str(pd.to_datetime(row.get("data")).date()) if not pd.isna(row.get("data")) else "",
+                                "inicio_festa": str(row.get("hora_inicio", "")),
+                                "fim_festa": str(row.get("hora_fim", "")),
+                                "status": "Confirmada"
+                            }
+                            sb_reservas_insert(nova_reserva)
+
+                            # 2) atualiza status no Supabase (todas as cópias desse id)
+                            sb_pre_update_status(rid, "Aprovada")
                             st.success(f"ID {rid}: Aprovada.")
                         except Exception as e:
                             st.error(f"Erro ao aprovar {rid}: {e}")
-                        st.stop()  # evita cair em outra ação no mesmo rerun
+                        st.rerun()
 
                     if recusar:
                         try:
-                            op_atualizar_status(rid, "Recusada")
+                            sb_pre_update_status(rid, "Recusada")
                             st.warning(f"ID {rid}: Recusada.")
                         except Exception as e:
                             st.error(f"Erro ao recusar {rid}: {e}")
-                        st.stop()
+                        st.rerun()
 
                     if excluir:
                         try:
-                            # Guard debug: verificar antes
-                            if debug:
-                                df_before = carregar_pre()
-                                qtd_before = (df_before["id"] == rid).sum()
-                                st.caption(f"DEBUG antes excluir: id={rid} aparece {qtd_before}x")
-
-                            op_excluir(rid)
-
-                            # Guard debug: verificar depois
-                            if debug:
-                                df_after = carregar_pre()
-                                qtd_after = (df_after["id"] == rid).sum()
-                                st.caption(f"DEBUG depois excluir: id={rid} aparece {qtd_after}x")
-
+                            sb_pre_delete(rid)  # deleta todas as linhas com esse id no banco
                             st.warning(f"ID {rid}: Excluída.")
                         except Exception as e:
                             st.error(f"Erro ao excluir {rid}: {e}")
-                        st.stop()
+                        st.rerun()
 
                 st.divider()
 
@@ -3837,6 +3799,7 @@ else:
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
 
