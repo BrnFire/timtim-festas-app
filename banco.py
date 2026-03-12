@@ -28,7 +28,7 @@ from supabase_rest import (
     table_insert,
     table_update,
     table_delete,
-    table_upsert,
+    table_upsert,   # >>> garanta que aceita on_conflict="id"
 )
 
 # ===================================================
@@ -36,8 +36,7 @@ from supabase_rest import (
 # ===================================================
 
 # Por padrão, SOMENTE pre_reservas fará deleção de IDs ausentes no df.
-# Você pode sobrescrever via variável de ambiente:
-#   SYNC_DELETE_TABLES=pre_reservas,reservas
+# Você pode sobrescrever via variável de ambiente, ex.: SYNC_DELETE_TABLES=pre_reservas,reservas
 _env_whitelist = os.getenv("SYNC_DELETE_TABLES", "pre_reservas")
 SYNC_DELETE_TABLES: set[str] = set(
     [t.strip().lower() for t in _env_whitelist.split(",") if t.strip()]
@@ -56,7 +55,6 @@ def _tabela_from_nome_arquivo(nome: str) -> str:
     if base.lower().endswith(".csv"):
         base = base[:-4]
     return base.lower()
-
 
 def _chunked(iterable: List[Dict[str, Any]], size: int = 500):
     """Gera blocos (chunks) para upload em lotes."""
@@ -82,7 +80,6 @@ def _normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     # NaN -> None
     df = df.where(pd.notnull(df), None)
     return df
-
 
 def _stringify_or_none(v: Any) -> Optional[str]:
     """Transforma valores 'vazios' em None; do contrário, string."""
@@ -135,7 +132,7 @@ def carregar_dados(nome_arquivo_ou_tabela: str, colunas: List[str]) -> pd.DataFr
         if dados:
             df = pd.DataFrame(dados)
         else:
-            # Mantemos apenas um aviso leve; evita confundir outras telas
+            # aviso leve (não quebra telas)
             st.warning(f"⚠️ Nenhum dado retornado da tabela '{tabela}'.")
     except Exception as e:
         logging.exception("Erro ao carregar dados da tabela %s", tabela)
@@ -149,18 +146,13 @@ def salvar_dados(df: pd.DataFrame, nome_tabela: str) -> None:
 
     Regras:
     - Se a tabela tiver coluna 'id':
-        * Converte datas para string ISO (yyyy-mm-dd).
-        * Remove NaN -> None.
-        * Padroniza 'id' como string (ou None para vazio).
-        * Dedup por 'id' (mantém a última ocorrência).
-        * Se a tabela estiver em SYNC_DELETE_TABLES:
-            - Deleta do banco todos os IDs que NÃO estão no df (sincroniza exclusões).
-          Caso contrário:
-            - Não executa deleções (compatível com telas que só inserem).
-        * Para cada linha do df:
-            - id None/vazio -> INSERT (deixa o banco gerar UUID, se houver default).
-            - id existente no banco -> UPDATE.
-            - id inexistente no banco -> INSERT.
+        * Normaliza datas e NaN.
+        * Padroniza 'id' como string (ou None).
+        * Dedup por 'id' (mantém a última).
+        * (Opcional) Deleção: se tabela estiver em SYNC_DELETE_TABLES,
+          deleta IDs existentes no banco que não estão no df.
+        * UPSERT em lote por 'id' (on_conflict='id') para TODOS os registros com id.
+        * (Opcional) INSERT apenas para registros SEM id (se existirem).
     - Se NÃO tiver 'id':
         * Mantém comportamento simples (upsert/insert em lote), sem deletar.
     """
@@ -170,30 +162,28 @@ def salvar_dados(df: pd.DataFrame, nome_tabela: str) -> None:
     tem_id = "id" in df.columns
 
     if tem_id:
-        # padroniza id como string/None e remove duplicados
+        # padroniza id
         df["id"] = df["id"].apply(_stringify_or_none)
+        # dedup por id (mantém a última) — None não se deduplica (pandas considera NaN únicos)
         df = df.drop_duplicates(subset=["id"], keep="last")
 
-    # ----------------------------------------
-    # Cenário: tabela SEM 'id' -> upsert simples (compatibilidade)
-    # ----------------------------------------
+    # -----------------------
+    # Sem 'id' -> compatibilidade
+    # -----------------------
     if not tem_id:
         registros = df.to_dict(orient="records")
-        # valida json
-        for reg in registros:
-            json.dumps(reg)
-        # upsert em blocos (sem deletar nada)
         for chunk in _chunked(registros, 500):
+            # upsert genérico (sem on_conflict)
             table_upsert(tabela, chunk)
         st.toast(f"💾 {len(registros)} registro(s) salvos em '{tabela}'.", icon="✅")
         return
 
-    # ----------------------------------------
-    # Cenário: tabela COM 'id' -> sincronização controlada
-    # ----------------------------------------
-    # 1) Carrega IDs atuais do banco
+    # -----------------------
+    # Com 'id' -> sync + upsert por id
+    # -----------------------
+    # 1) Buscar somente IDs do banco (menos payload)
     try:
-        atuais = table_select(tabela)  # SELECT * FROM tabela
+        atuais = table_select(tabela)  # ideal: table_select(tabela, columns=['id'])
         df_atuais = pd.DataFrame(atuais) if atuais else pd.DataFrame(columns=["id"])
         if "id" not in df_atuais.columns:
             df_atuais["id"] = None
@@ -206,64 +196,45 @@ def salvar_dados(df: pd.DataFrame, nome_tabela: str) -> None:
     ids_no_banco = set([x for x in df_atuais["id"].dropna().tolist()])
     ids_no_df    = set([x for x in df["id"].dropna().tolist()])
 
-    # 2) EXCLUSÕES (APENAS para tabelas na whitelist)
-    ids_para_deletar: List[str] = []
+    # 2) EXCLUSÕES (somente para tabelas em whitelist)
+    deletados = 0
     if tabela in SYNC_DELETE_TABLES:
         ids_para_deletar = sorted(ids_no_banco - ids_no_df)
         for pid in ids_para_deletar:
             try:
                 table_delete(tabela, {"id": pid})
+                deletados += 1
             except Exception as e:
                 logging.exception("Erro ao deletar id=%s em %s: %s", pid, tabela, e)
                 st.error(f"❌ Erro ao deletar id={pid} em '{tabela}': {e}")
 
-    # 3) INSERT/UPDATE linha a linha (decide com base na existência do id)
-    registros = df.to_dict(orient="records")
+    # 3) UPSERT em lote por 'id' (SEM inserts duplicados)
+    #    - todos os registros COM id vão em upsert com on_conflict='id'
+    with_id_df = df[df["id"].notna()].copy()
+    sem_id_df  = df[df["id"].isna()].copy()
 
-    inseridos = 0
-    atualizados = 0
+    atualizados_ou_inseridos = 0
 
-    for reg in registros:
-        # garante json serializável
-        json.dumps(reg)
+    if not with_id_df.empty:
+        registros_id = with_id_df.to_dict(orient="records")
+        for chunk in _chunked(registros_id, 500):
+            # >>> GARANTA no supabase_rest.table_upsert que on_conflict vira '?on_conflict=id'
+            table_upsert(tabela, chunk, on_conflict="id")
+            atualizados_ou_inseridos += len(chunk)
 
-        rid = reg.get("id", None)
+    # 4) (Opcional) INSERT de registros SEM id (se ocorrer no seu fluxo)
+    #    — para pré-reservas isso normalmente não acontece via UI.
+    if not sem_id_df.empty:
+        registros_sem_id = sem_id_df.to_dict(orient="records")
+        for chunk in _chunked(registros_sem_id, 500):
+            table_insert(tabela, chunk)
+            atualizados_ou_inseridos += len(chunk)
 
-        if rid is None:
-            # INSERT sem id -> deixa o banco gerar UUID (ou falhar se não houver default)
-            try:
-                table_insert(tabela, [reg])
-                inseridos += 1
-            except Exception as e:
-                logging.exception("Erro ao inserir em %s: %s | registro=%s", tabela, e, reg)
-                st.error(f"❌ Erro ao inserir em '{tabela}': {e}")
-            continue
-
-        # com id
-        if rid in ids_no_banco:
-            # UPDATE quando o id já existe no banco
-            try:
-                table_update(tabela, {"id": rid}, reg)
-                atualizados += 1
-            except Exception as e:
-                logging.exception("Erro ao atualizar id=%s em %s: %s | registro=%s", rid, tabela, e, reg)
-                st.error(f"❌ Erro ao atualizar id={rid} em '{tabela}': {e}")
-        else:
-            # INSERT quando o id ainda não existe no banco
-            try:
-                table_insert(tabela, [reg])
-                inseridos += 1
-            except Exception as e:
-                logging.exception("Erro ao inserir (novo id=%s) em %s: %s | registro=%s", rid, tabela, e, reg)
-                st.error(f"❌ Erro ao inserir id={rid} em '{tabela}': {e}")
-
-    # 4) Feedback (claro e útil para o usuário)
-    msg = (
-        f"💾 {tabela}: {atualizados} atualizado(s), {inseridos} inserido(s)"
-        + (f", {len(ids_para_deletar)} excluído(s)" if ids_para_deletar else "")
-        + "."
+    # 5) Feedback
+    st.toast(
+        f"💾 {tabela}: {atualizados_ou_inseridos} upsert/insert, {deletados} excluído(s).",
+        icon="✅"
     )
-    st.toast(msg, icon="✅")
 
 # ===================================================
 # FUNÇÕES AUXILIARES (INSERIR / ATUALIZAR / DELETAR)
