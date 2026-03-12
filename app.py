@@ -2893,284 +2893,189 @@ def salvar_foto_imediato(foto_bytes: bytes, nome_hint: str, ext: str = ".jpg") -
 
 
 
+
 # ======================================
-# PÁGINA: PRÉ-RESERVAS (REST Supabase + normalização + chaves únicas)
+# PÁGINA: PRÉ-RESERVAS
 # ======================================
 
-import os
-import requests
+from banco import carregar_dados, salvar_dados
 import pandas as pd
 import streamlit as st
 
-from banco import carregar_dados  # leitura continua via banco.py
 
-# ----------------------------
-# Supabase REST (sem biblioteca)
-# ----------------------------
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
-REST_URL = f"{SUPABASE_URL}/rest/v1" if SUPABASE_URL else ""
-
-def _assert_env():
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        raise RuntimeError(
-            "Defina SUPABASE_URL e SUPABASE_KEY nas variáveis de ambiente do servidor."
-        )
-
-def _headers(prefer: str | None = None):
-    h = {
-        "apikey": SUPABASE_KEY,
-        "Authorization": f"Bearer {SUPABASE_KEY}",
-        "Content-Type": "application/json",
-    }
-    if prefer:
-        h["Prefer"] = prefer  # ex.: 'return=representation'
-    return h
-
-def sb_pre_update_status(pre_id: str, novo_status: str):
-    """Atualiza o status de TODAS as linhas com esse id (se existirem duplicadas)."""
-    _assert_env()
-    url = f"{REST_URL}/pre_reservas?id=eq.{pre_id}"
-    r = requests.patch(url, headers=_headers("return=representation"), json={"status": novo_status})
-    if not r.ok:
-        raise RuntimeError(f"[UPDATE pre_reservas] {r.status_code}: {r.text}")
-    return r.json()
-
-def sb_pre_delete(pre_id: str):
-    """Deleta TODAS as linhas com esse id (se existirem duplicadas)."""
-    _assert_env()
-    url = f"{REST_URL}/pre_reservas?id=eq.{pre_id}"
-    r = requests.delete(url, headers=_headers())
-    if not r.ok:
-        raise RuntimeError(f"[DELETE pre_reservas] {r.status_code}: {r.text}")
-    # 200/204 sem payload
-    return {"status": "deleted", "id": pre_id, "http_status": r.status_code}
-
-def sb_reservas_insert(nova_reserva: dict):
-    """Insere uma nova reserva."""
-    _assert_env()
-    url = f"{REST_URL}/reservas"
-    r = requests.post(url, headers=_headers("return=representation"), json=nova_reserva)
-    if not r.ok:
-        raise RuntimeError(f"[INSERT reservas] {r.status_code}: {r.text}")
-    return r.json()
-
-# ----------------------------
-# Colunas esperadas
-# ----------------------------
-COLS_PRE = [
-    "id","nome","telefone","email","rg","cpf",
-    "como_conheceu","cep","logradouro","numero",
-    "complemento","bairro","cidade","observacao",
-    "data","hora_inicio","hora_fim","brinquedos","status"
-]
-
-VALIDOS = {"Pendente", "Aprovada", "Recusada"}
-
-# ----------------------------
-# Normalização de status
-# ----------------------------
-def _normaliza_status(s):
-    """Normaliza valores para 'Pendente', 'Aprovada' ou 'Recusada' quando possível.
-       Mantém valor ajustado (Title) caso não reconheça, e cairá em 'Outros'."""
-    if pd.isna(s):
-        return ""
-    x = str(s).strip()
-    if x == "":
-        return ""
-    x_title = x.title()  # ex.: 'pendente ' -> 'Pendente'
-    mapa = {
-        "Pending": "Pendente",
-        "Pendentes": "Pendente",
-        "Pendente ": "Pendente",
-        "Aprovada ": "Aprovada",
-        "Aprove": "Aprovada",
-        "Approved": "Aprovada",
-        "Recusado": "Recusada",
-        "Recusada ": "Recusada",
-        "Rejected": "Recusada",
-    }
-    x_norm = mapa.get(x_title, x_title)
-    return x_norm
-
-def _fmt_data(d):
-    if pd.isna(d):
-        return "—"
-    try:
-        return pd.to_datetime(d).strftime("%d/%m/%Y")
-    except Exception:
-        return "—"
-
-# ----------------------------
-# Carregar pré-reservas (dedup por id é OPCIONAL)
-# ----------------------------
-def _carregar_pre(dedup_por_id: bool = False):
-    # Continua usando o banco.py para leitura
-    df = carregar_dados("pre_reservas", ["*"])
-    if df is None or df.empty:
-        return pd.DataFrame(columns=COLS_PRE)
-
-    # Garante colunas esperadas
-    for c in COLS_PRE:
-        if c not in df.columns:
-            df[c] = None
-
-    # Tipos/formatos
-    df["id"] = df["id"].astype(str)
-    df["status"] = df["status"].apply(_normaliza_status)
-
-    if "data" in df.columns:
-        df["data"] = pd.to_datetime(df["data"], errors="coerce")
-
-    # Ordenação base para que 'keep=last' faça sentido se dedup ligar
-    if "created_at" in df.columns:
-        df = df.sort_values(by=["created_at"], ascending=True)
-    elif "data" in df.columns and "hora_inicio" in df.columns:
-        df = df.sort_values(by=["data","hora_inicio"], ascending=[True, True])
-    elif "data" in df.columns:
-        df = df.sort_values(by=["data"], ascending=True)
-
-    # Dedup por id: DESLIGADO por padrão (para não esconder linhas)
-    if dedup_por_id:
-        df = df.drop_duplicates(subset=["id"], keep="last")
-
-    # Ordenação final de exibição
-    if "data" in df.columns and "hora_inicio" in df.columns:
-        df = df.sort_values(by=["data","hora_inicio"], ascending=[True, True])
-    elif "data" in df.columns:
-        df = df.sort_values(by=["data"], ascending=True)
-
-    return df[COLS_PRE].reset_index(drop=True)
-
-# ============
-# A PÁGINA
-# ============
 def pagina_pre_reservas():
 
     st.header("📅 Gerenciar Pré-Reservas")
 
-    # Controles de debug/dedup
-    col_dbg1, col_dbg2 = st.sidebar.columns(2)
-    debug = col_dbg1.checkbox("🔧 Debug", value=False)
-    dedup = col_dbg2.checkbox("🧹 Dedup por id", value=False)  # desativado por padrão
+    # ===============================
+    # CARREGAR DADOS
+    # ===============================
 
-    # Carrega dados (sem dedup por padrão)
-    pre = _carregar_pre(dedup_por_id=dedup)
+    pre = carregar_dados(
+        "pre_reservas",
+        [
+            "id","nome","telefone","email","rg","cpf",
+            "como_conheceu","cep","logradouro","numero",
+            "complemento","bairro","cidade","observacao",
+            "data","hora_inicio","hora_fim","brinquedos","status"
+        ]
+    )
+
+    reservas = carregar_dados("reservas", ["*"])
+    clientes = carregar_dados("clientes", ["*"])
+
     if pre.empty:
         st.warning("⚠️ Nenhuma pré-reserva encontrada.")
         return
 
-    # Indicadores
-    pendentes = (pre["status"] == "Pendente").sum()
-    aprovadas = (pre["status"] == "Aprovada").sum()
-    recusadas = (pre["status"] == "Recusada").sum()
+    # ===============================
+    # FORMATAR DATA
+    # ===============================
+
+    pre["data"] = pd.to_datetime(pre["data"], errors="coerce")
+    pre = pre.sort_values("data")
+
+    # ===============================
+    # INDICADORES
+    # ===============================
+
+    pendentes = len(pre[pre["status"] == "Pendente"])
+    aprovadas = len(pre[pre["status"] == "Aprovada"])
+    recusadas = len(pre[pre["status"] == "Recusada"])
     total = len(pre)
 
     c1, c2, c3, c4 = st.columns(4)
+
     c1.metric("📊 Total", total)
     c2.metric("🟡 Pendentes", pendentes)
     c3.metric("🟢 Aprovadas", aprovadas)
     c4.metric("🔴 Recusadas", recusadas)
 
-    if debug:
-        st.caption("Distribuição de status (após normalização):")
-        try:
-            st.code(pre["status"].value_counts(dropna=False).to_string())
-        except Exception:
-            st.write(pre["status"].value_counts(dropna=False))
-
     st.divider()
 
-    # Abas (inclui 'Outros' para nada sumir)
-    aba1, aba2, aba3, aba4 = st.tabs(["🟡 Pendentes", "🟢 Aprovadas", "🔴 Recusadas", "🗂️ Outros"])
+    # ===============================
+    # ABAS
+    # ===============================
 
-    # Função de render com CHAVES ÚNICAS por linha
-    def render_cards(df_listagem: pd.DataFrame, status_rotulo: str, debug_flag: bool = False):
-        if df_listagem.empty:
-            st.info("Nenhuma reserva nesta categoria.")
-            return
+    aba1, aba2, aba3 = st.tabs(["🟡 Pendentes", "🟢 Aprovadas", "🔴 Recusadas"])
 
-        # enumerate => sufixo único em chaves
-        for i, (idx, row) in enumerate(df_listagem.iterrows()):
-            rid = str(row["id"])
-            unique = f"{status_rotulo}_{rid}_{i}"  # garante chave única
+    abas = {
+        aba1: "Pendente",
+        aba2: "Aprovada",
+        aba3: "Recusada"
+    }
 
-            col1, col2, col3 = st.columns(3)
-            col1.subheader(row.get("nome", "Sem nome"))
-            col2.write(_fmt_data(row.get("data")))
-            col3.write(f"{row.get('hora_inicio', '—')} - {row.get('hora_fim', '—')}")
+    for aba, status in abas.items():
 
-            with st.expander("Ver detalhes"):
-                st.write("ID:", rid)
-                st.write("Telefone:", row.get("telefone", "—"))
-                st.write("Email:", row.get("email", "—"))
-                st.write("CPF:", row.get("cpf", "—"))
-                st.write("Endereço:", f"{row.get('logradouro', '—')} {row.get('numero', '')}".strip())
-                st.write("Brinquedos:", row.get("brinquedos", "—"))
-                st.write("Observação:", row.get("observacao", "—"))
-                if debug_flag:
-                    st.caption(f"DEBUG: status_original={row.get('status')} | aba={status_rotulo} | key=form_{unique}")
+        with aba:
 
-            # Form por item com chave única
-            with st.form(key=f"form_{unique}"):
-                if status_rotulo == "Pendente":
-                    b1, b2, b3 = st.columns(3)
-                    aprovar = b1.form_submit_button("✅ Aprovar", use_container_width=True)
-                    recusar = b2.form_submit_button("❌ Recusar", use_container_width=True)
-                    excluir = b3.form_submit_button("🗑 Excluir", use_container_width=True)
-                else:
-                    b1, _ = st.columns([1,3])
-                    aprovar = False
-                    recusar = False
-                    excluir = b1.form_submit_button("🗑 Excluir", use_container_width=True)
+            df = pre[pre["status"] == status]
 
-                if aprovar:
-                    try:
+            if df.empty:
+                st.info("Nenhuma reserva nesta categoria.")
+                continue
+
+            for idx, row in df.iterrows():
+
+                col1, col2, col3 = st.columns(3)
+
+                col1.subheader(row["nome"])
+                col2.write(row["data"].strftime("%d/%m/%Y"))
+                col3.write(f"{row['hora_inicio']} - {row['hora_fim']}")
+
+                with st.expander("Ver detalhes"):
+
+                    st.write("Telefone:", row["telefone"])
+                    st.write("Email:", row["email"])
+                    st.write("CPF:", row["cpf"])
+                    st.write("Endereço:", row["logradouro"], row["numero"])
+                    st.write("Brinquedos:", row["brinquedos"])
+                    st.write("Observação:", row["observacao"])
+
+                # ===============================
+                # BOTÕES
+                # ===============================
+
+                if status == "Pendente":
+
+                    colA, colB, colC = st.columns(3)
+
+                    # ===============================
+                    # APROVAR
+                    # ===============================
+
+                    if colA.button("✅ Aprovar", key=f"aprovar_{row['id']}"):
+
+                        # criar reserva
                         nova_reserva = {
-                            "cliente": row.get("nome"),
-                            "brinquedos": row.get("brinquedos"),
-                            "data": str(pd.to_datetime(row.get("data")).date()) if not pd.isna(row.get("data")) else "",
-                            "inicio_festa": str(row.get("hora_inicio", "")),
-                            "fim_festa": str(row.get("hora_fim", "")),
+                            "cliente": row["nome"],
+                            "brinquedos": row["brinquedos"],
+                            "data": str(row["data"].date()),
+                            "inicio_festa": str(row["hora_inicio"]),
+                            "fim_festa": str(row["hora_fim"]),
                             "status": "Confirmada"
                         }
-                        sb_reservas_insert(nova_reserva)
-                        sb_pre_update_status(rid, "Aprovada")
-                        st.success(f"ID {rid}: Aprovada.")
-                    except Exception as e:
-                        st.error(f"Erro ao aprovar {rid}: {e}")
-                    st.rerun()
 
-                if recusar:
-                    try:
-                        sb_pre_update_status(rid, "Recusada")
-                        st.warning(f"ID {rid}: Recusada.")
-                    except Exception as e:
-                        st.error(f"Erro ao recusar {rid}: {e}")
-                    st.rerun()
+                        reservas = pd.concat(
+                            [reservas, pd.DataFrame([nova_reserva])],
+                            ignore_index=True
+                        )
 
-                if excluir:
-                    try:
-                        sb_pre_delete(rid)  # apaga TODAS as cópias com este id
-                        st.warning(f"ID {rid}: Excluída.")
-                    except Exception as e:
-                        st.error(f"Erro ao excluir {rid}: {e}")
-                    st.rerun()
+                        salvar_dados(reservas, "reservas")
 
-            st.divider()
+                        # atualizar status
+                        registro = row.copy()
+                        registro["status"] = "Aprovada"
 
-    # Renderiza as abas principais
-    with aba1:
-        render_cards(pre[pre["status"] == "Pendente"], "Pendente", debug_flag=debug)
-    with aba2:
-        render_cards(pre[pre["status"] == "Aprovada"], "Aprovada", debug_flag=debug)
-    with aba3:
-        render_cards(pre[pre["status"] == "Recusada"], "Recusada", debug_flag=debug)
+                        # remover antigo
+                        pre = pre[pre["id"] != row["id"]]
 
-    # Aba 'Outros' (tudo que não é Pendente/Aprovada/Recusada)
-    with aba4:
-        outros = pre[~pre["status"].isin(VALIDOS)]
-        render_cards(outros, "Outros", debug_flag=debug)
+                        # adicionar atualizado
+                        pre = pd.concat(
+                            [pre, pd.DataFrame([registro])],
+                            ignore_index=True
+                        )
+
+                        salvar_dados(pre, "pre_reservas")
+
+                        st.success("Reserva aprovada!")
+                        st.rerun()
+
+                    # ===============================
+                    # RECUSAR
+                    # ===============================
+
+                    if colB.button("❌ Recusar", key=f"recusar_{row['id']}"):
+
+                        registro = row.copy()
+                        registro["status"] = "Recusada"
+
+                        pre = pre[pre["id"] != row["id"]]
+
+                        pre = pd.concat(
+                            [pre, pd.DataFrame([registro])],
+                            ignore_index=True
+                        )
+
+                        salvar_dados(pre, "pre_reservas")
+
+                        st.warning("Pré-reserva recusada.")
+                        st.rerun()
+
+
+                # EXCLUIR
+                    if colC.button("🗑 Excluir", key=f"excluir_{idx}"):
+
+                        # remove a linha
+                        pre = pre.drop(idx)
+
+                        # salva novamente
+                        salvar_dados(pre, "pre_reservas")
+
+                        st.warning("Pré-reserva excluída.")
+                        st.rerun()
+
+                st.divider()
 
 
 # ======================================
@@ -3856,6 +3761,7 @@ else:
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
 
