@@ -2895,14 +2895,39 @@ def salvar_foto_imediato(foto_bytes: bytes, nome_hint: str, ext: str = ".jpg") -
 
 
 
-
 # ======================================
 # PÁGINA: PRÉ-RESERVAS
 # ======================================
 
-from banco import carregar_dados, salvar_dados, atualizar_por_filtro, deletar_por_filtro
+from banco import (
+    carregar_dados,
+    salvar_dados,            # ainda usado para reservas (se você preferir)
+    atualizar_por_filtro,    # UPDATE direto no banco por filtro
+    inserir_um,              # INSERT direto no banco
+    deletar_por_filtro       # usado em excluir
+)
 import pandas as pd
 import streamlit as st
+
+
+def _normaliza_cpf(cpf: str | None) -> str:
+    if not cpf:
+        return ""
+    return "".join([c for c in str(cpf) if c.isdigit()])
+
+
+def _clean(d: dict) -> dict:
+    """
+    Remove chaves cujo valor é None ou string vazia (evita sobrescrever com vazio).
+    """
+    out = {}
+    for k, v in d.items():
+        if v is None:
+            continue
+        if isinstance(v, str) and v.strip() == "":
+            continue
+        out[k] = v
+    return out
 
 
 def pagina_pre_reservas():
@@ -2923,7 +2948,6 @@ def pagina_pre_reservas():
     )
 
     reservas = carregar_dados("reservas", ["*"])
-    # clientes = carregar_dados("clientes", ["*"])  # se precisar mais tarde
 
     if pre.empty:
         st.warning("⚠️ Nenhuma pré-reserva encontrada.")
@@ -2934,7 +2958,6 @@ def pagina_pre_reservas():
     # ===============================
     pre["id"] = pre["id"].astype(str)
 
-    # Normalização leve de status para contadores/abas (opcional)
     pre["status"] = (
         pre["status"]
         .fillna("")
@@ -2995,7 +3018,6 @@ def pagina_pre_reservas():
                 st.info("Nenhuma reserva nesta categoria.")
                 continue
 
-            # enumerate -> chaves únicas por linha
             for i, (idx, row) in enumerate(df.iterrows()):
                 rid = str(row["id"])
 
@@ -3020,53 +3042,112 @@ def pagina_pre_reservas():
                 if status == "Pendente":
                     colA, colB, colC = st.columns(3)
 
-                    # APROVAR
+                    # ✅ APROVAR (cliente por CPF + reserva + aprovar pre)
                     if colA.button("✅ Aprovar", key=f"aprovar_{rid}_{i}"):
 
-                        # 1) cria reserva localmente
-                        nova_reserva = {
-                            "cliente": row.get("nome"),
-                            "brinquedos": row.get("brinquedos"),
-                            "data": str(row["data"].date()) if not pd.isna(row["data"]) else "",
-                            "inicio_festa": str(row.get("hora_inicio", "")),
-                            "fim_festa": str(row.get("hora_fim", "")),
-                            "status": "Confirmada"
-                        }
-                        reservas = pd.concat([reservas, pd.DataFrame([nova_reserva])], ignore_index=True)
-                        salvar_dados(reservas, "reservas")  # mantém seu fluxo
+                        try:
+                            # 1) CPF normalizado
+                            cpf_norm = _normaliza_cpf(row.get("cpf"))
+                            if not cpf_norm:
+                                st.error("CPF não informado/ inválido nesta pré-reserva.")
+                                st.stop()
 
-                        # 2) atualiza status DIRETO no banco (sem mexer no df local)
-                        atualizar_por_filtro("pre_reservas", {"status": "Aprovada"}, {"id": rid})
+                            # 2) Monta dados do cliente a partir da pré-reserva
+                            #    (obs: clientes usa 'como_conseguiu'; pre usa 'como_conheceu')
+                            cliente_payload = _clean({
+                                "nome":         row.get("nome"),
+                                "telefone":     row.get("telefone"),
+                                "email":        row.get("email"),
+                                "tipo_cliente": "PF",                       # default
+                                "rg":           row.get("rg"),
+                                "cpf":          cpf_norm,                   # normalizado
+                                "cnpj":         None,                       # PF
+                                "como_conseguiu": row.get("como_conheceu"),
+                                "logradouro":   row.get("logradouro"),
+                                "numero":       str(row.get("numero") or ""),
+                                "complemento":  row.get("complemento"),
+                                "bairro":       row.get("bairro"),
+                                "cidade":       row.get("cidade"),
+                                "cep":          row.get("cep"),
+                                "observacao":   row.get("observacao"),
+                            })
 
-                        st.success("Reserva aprovada!")
+                            # 3) Verifica se já existe cliente pelo CPF
+                            clientes_df = carregar_dados("clientes", ["cpf"])
+                            if not clientes_df.empty:
+                                clientes_df["cpf"] = clientes_df["cpf"].astype(str)
+                                clientes_df["cpf_norm"] = clientes_df["cpf"].str.replace(r"\D", "", regex=True)
+                                existe_cliente = (clientes_df["cpf_norm"] == cpf_norm).any()
+                            else:
+                                existe_cliente = False
+
+                            if existe_cliente:
+                                # UPDATE por CPF
+                                atualizar_por_filtro("clientes", cliente_payload, {"cpf": cpf_norm})
+                            else:
+                                # INSERT novo cliente
+                                inserir_um("clientes", cliente_payload)
+
+                            # 4) Cria a RESERVA a partir da pré-reserva
+                            nova_reserva = {
+                                "cliente":        row.get("nome"),
+                                "brinquedos":     row.get("brinquedos"),
+                                "data":           str(row["data"].date()) if not pd.isna(row["data"]) else "",
+                                "horario_entrega": None,
+                                "horario_retirada": None,
+                                "inicio_festa":   str(row.get("hora_inicio", "")),
+                                "fim_festa":      str(row.get("hora_fim", "")),
+                                "valor_total":    None,
+                                "valor_extra":    None,
+                                "frete":          None,
+                                "desconto":       None,
+                                "sinal":          None,
+                                "falta":          None,
+                                "observacao":     row.get("observacao"),
+                                "status":         "Confirmada",
+                                "pagamentos":     None,
+                                # 'id' é identity; não enviamos
+                            }
+
+                            # Você pode usar inserir_um para evitar duplicação
+                            inserir_um("reservas", nova_reserva)
+
+                            # 5) Atualiza a pré-reserva para Aprovada (direto no banco)
+                            atualizar_por_filtro("pre_reservas", {"status": "Aprovada"}, {"id": rid})
+
+                            st.success("Reserva aprovada, cliente atualizado/criado e reserva inserida!")
+                        except Exception as e:
+                            st.error(f"Erro ao aprovar: {e}")
+
                         st.rerun()
 
-                    # RECUSAR
+                    # ❌ RECUSAR (já OK)
                     if colB.button("❌ Recusar", key=f"recusar_{rid}_{i}"):
-
-                        # Atualiza apenas o status direto no banco
-                        atualizar_por_filtro("pre_reservas", {"status": "Recusada"}, {"id": rid})
-
-                        st.warning("Pré-reserva recusada.")
+                        try:
+                            atualizar_por_filtro("pre_reservas", {"status": "Recusada"}, {"id": rid})
+                            st.warning("Pré-reserva recusada.")
+                        except Exception as e:
+                            st.error(f"Erro ao recusar: {e}")
                         st.rerun()
 
-                    # EXCLUIR
+                    # 🗑 EXCLUIR (já OK)
                     if colC.button("🗑 Excluir", key=f"excluir_{rid}_{i}"):
-
-                        # Deleta direto no banco
-                        deletar_por_filtro("pre_reservas", {"id": rid})
-
-                        st.warning("Pré-reserva excluída.")
+                        try:
+                            deletar_por_filtro("pre_reservas", {"id": rid})
+                            st.warning("Pré-reserva excluída.")
+                        except Exception as e:
+                            st.error(f"Erro ao excluir: {e}")
                         st.rerun()
 
                 else:
-                    # EXCLUIR nas abas Aprovadas/Recusadas
+                    # EXCLUIR também nas abas Aprovadas/Recusadas
                     colX = st.columns(1)[0]
                     if colX.button("🗑 Excluir", key=f"excluir_{rid}_{status}_{i}"):
-
-                        deletar_por_filtro("pre_reservas", {"id": rid})
-
-                        st.warning("Pré-reserva excluída.")
+                        try:
+                            deletar_por_filtro("pre_reservas", {"id": rid})
+                            st.warning("Pré-reserva excluída.")
+                        except Exception as e:
+                            st.error(f"Erro ao excluir: {e}")
                         st.rerun()
 
                 st.divider()
@@ -3755,6 +3836,7 @@ else:
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
+
 
 
 
