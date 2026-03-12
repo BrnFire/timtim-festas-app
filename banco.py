@@ -28,7 +28,7 @@ from supabase_rest import (
     table_insert,
     table_update,
     table_delete,
-    table_upsert,   # >>> garanta que aceita on_conflict="id"
+    # table_upsert,  # <<< não vamos usar para evitar TypeError e duplicações
 )
 
 # ===================================================
@@ -151,10 +151,12 @@ def salvar_dados(df: pd.DataFrame, nome_tabela: str) -> None:
         * Dedup por 'id' (mantém a última).
         * (Opcional) Deleção: se tabela estiver em SYNC_DELETE_TABLES,
           deleta IDs existentes no banco que não estão no df.
-        * UPSERT em lote por 'id' (on_conflict='id') para TODOS os registros com id.
-        * (Opcional) INSERT apenas para registros SEM id (se existirem).
+        * Para cada linha do df:
+            - id None/vazio -> INSERT.
+            - id existente no banco -> UPDATE.
+            - id inexistente no banco -> INSERT.
     - Se NÃO tiver 'id':
-        * Mantém comportamento simples (upsert/insert em lote), sem deletar.
+        * Insere em lote (sem deletar).
     """
     tabela = _tabela_from_nome_arquivo(nome_tabela)
     df = _normalize_dataframe(df)
@@ -162,9 +164,8 @@ def salvar_dados(df: pd.DataFrame, nome_tabela: str) -> None:
     tem_id = "id" in df.columns
 
     if tem_id:
-        # padroniza id
+        # padroniza id e elimina duplicadas por id no df
         df["id"] = df["id"].apply(_stringify_or_none)
-        # dedup por id (mantém a última) — None não se deduplica (pandas considera NaN únicos)
         df = df.drop_duplicates(subset=["id"], keep="last")
 
     # -----------------------
@@ -173,15 +174,14 @@ def salvar_dados(df: pd.DataFrame, nome_tabela: str) -> None:
     if not tem_id:
         registros = df.to_dict(orient="records")
         for chunk in _chunked(registros, 500):
-            # upsert genérico (sem on_conflict)
-            table_upsert(tabela, chunk)
-        st.toast(f"💾 {len(registros)} registro(s) salvos em '{tabela}'.", icon="✅")
+            table_insert(tabela, chunk)
+        st.toast(f"💾 {len(registros)} registro(s) inseridos em '{tabela}'.", icon="✅")
         return
 
     # -----------------------
-    # Com 'id' -> sync + upsert por id
+    # Com 'id' -> sync + update/insert por linha
     # -----------------------
-    # 1) Buscar somente IDs do banco (menos payload)
+    # 1) Buscar IDs do banco
     try:
         atuais = table_select(tabela)  # ideal: table_select(tabela, columns=['id'])
         df_atuais = pd.DataFrame(atuais) if atuais else pd.DataFrame(columns=["id"])
@@ -208,31 +208,48 @@ def salvar_dados(df: pd.DataFrame, nome_tabela: str) -> None:
                 logging.exception("Erro ao deletar id=%s em %s: %s", pid, tabela, e)
                 st.error(f"❌ Erro ao deletar id={pid} em '{tabela}': {e}")
 
-    # 3) UPSERT em lote por 'id' (SEM inserts duplicados)
-    #    - todos os registros COM id vão em upsert com on_conflict='id'
-    with_id_df = df[df["id"].notna()].copy()
-    sem_id_df  = df[df["id"].isna()].copy()
+    # 3) UPDATE/INSERT linha a linha
+    registros = df.to_dict(orient="records")
+    atualizados = 0
+    inseridos = 0
 
-    atualizados_ou_inseridos = 0
+    for reg in registros:
+        # garante json serializável
+        json.dumps(reg)
 
-    if not with_id_df.empty:
-        registros_id = with_id_df.to_dict(orient="records")
-        for chunk in _chunked(registros_id, 500):
-            # >>> GARANTA no supabase_rest.table_upsert que on_conflict vira '?on_conflict=id'
-            table_upsert(tabela, chunk, on_conflict="id")
-            atualizados_ou_inseridos += len(chunk)
+        rid = reg.get("id", None)
 
-    # 4) (Opcional) INSERT de registros SEM id (se ocorrer no seu fluxo)
-    #    — para pré-reservas isso normalmente não acontece via UI.
-    if not sem_id_df.empty:
-        registros_sem_id = sem_id_df.to_dict(orient="records")
-        for chunk in _chunked(registros_sem_id, 500):
-            table_insert(tabela, chunk)
-            atualizados_ou_inseridos += len(chunk)
+        if rid is None:
+            # INSERT sem id -> deixa o banco gerar UUID (se houver default)
+            try:
+                table_insert(tabela, [reg])
+                inseridos += 1
+            except Exception as e:
+                logging.exception("Erro ao inserir em %s: %s | registro=%s", tabela, e, reg)
+                st.error(f"❌ Erro ao inserir em '{tabela}': {e}")
+            continue
 
-    # 5) Feedback
+        # com id
+        if rid in ids_no_banco:
+            # UPDATE quando o id já existe no banco
+            try:
+                table_update(tabela, {"id": rid}, reg)
+                atualizados += 1
+            except Exception as e:
+                logging.exception("Erro ao atualizar id=%s em %s: %s | registro=%s", rid, tabela, e, reg)
+                st.error(f"❌ Erro ao atualizar id={rid} em '{tabela}': {e}")
+        else:
+            # INSERT quando o id ainda não existe no banco
+            try:
+                table_insert(tabela, [reg])
+                inseridos += 1
+            except Exception as e:
+                logging.exception("Erro ao inserir (novo id=%s) em %s: %s | registro=%s", rid, tabela, e, reg)
+                st.error(f"❌ Erro ao inserir id={rid} em '{tabela}': {e}")
+
+    # 4) Feedback
     st.toast(
-        f"💾 {tabela}: {atualizados_ou_inseridos} upsert/insert, {deletados} excluído(s).",
+        f"💾 {tabela}: {atualizados} atualizado(s), {inseridos} inserido(s), {deletados} excluído(s).",
         icon="✅"
     )
 
