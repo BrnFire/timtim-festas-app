@@ -2419,7 +2419,7 @@ def pagina_checklist():
             )
         else:
             st.info("Nenhuma peça cadastrada ainda.")
-``
+
 
 
 # ==============================
