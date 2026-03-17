@@ -49,33 +49,6 @@ def _chunked(iterable: List[Dict[str, Any]], size: int = 500):
         yield iterable[i:i + size]
 
 
-# ===================================================
-# CORRIGE ERRO DE SALVAR PEÇA DUPLICADA
-# ===================================================
-# banco.py
-from typing import Any, Dict, List, Tuple
-import psycopg2  # se você já tiver conexão psycopg2 ou usar pool do Supabase PG
-
-# Supondo que você tenha uma função para pegar conexao psycopg2
-def get_conn():
-    # implemente conforme seu projeto (string de conexão do Supabase/PG)
-    ...
-
-def inserir_peca_unica(brinquedo: str, item: str):
-    """
-    Insere 1 linha em pecas_brinquedos.
-    Se já existir (por qualquer UNIQUE), ignora.
-    """
-    sql = '''
-        INSERT INTO public.pecas_brinquedos ("Brinquedo","Item")
-        VALUES (%s, %s)
-        ON CONFLICT DO NOTHING;
-    '''
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql, (brinquedo.strip(), item.strip()))
-        conn.commit()
-
 
 
 # ===================================================
