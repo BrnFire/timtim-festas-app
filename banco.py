@@ -352,4 +352,4 @@ def _ensure_cols(df, cols, defaults=None):
     except TypeError:
         # fallback para chamadas antigas sem defaults
         return _ensure_columns(df, cols)
-``
+
