@@ -2126,6 +2126,7 @@ def pagina_agenda():
     # PAGINA CHECK LIST
     # ========================================
 
+
 def pagina_checklist():
     import pandas as pd
     from datetime import datetime
@@ -2184,43 +2185,32 @@ def pagina_checklist():
         pecas_map = pecas.groupby("Brinquedo")["Item"].apply(list).to_dict()
 
     # ========================================
-    # PAGE TABS
+    # Utils
     # ========================================
-    aba1, aba2 = st.tabs(["✅ Realizar Check-list", "🧩 Cadastrar Peças"])
-
-    # ================================
-    # Funções auxiliares
-    # ================================
     STAGES = [
         ("Montagem do carro", "Montagem"),
         ("Entrega (Saída)", "Entrega"),
         ("Retirada (Volta)", "Retirada"),
     ]
 
-    def build_brinquedo_label(nome_brinquedo: str) -> str:
-        """Retorna 'Brinquedo (peça1, peça2, ...)' com truncamento para caber no select."""
-        itens = pecas_map.get(nome_brinquedo, [])
-        if not itens:
-            return f"{nome_brinquedo} (sem peças)"
-        texto = ", ".join(itens)
-        if len(texto) > 80:
-            # Trunca preservando contagem
-            tokens = []
-            total = 0
-            for t in itens:
-                if total + len(t) + (2 if tokens else 0) > 80:
-                    break
-                tokens.append(t)
-                total += len(t) + (2 if tokens else 0)
-            restante = len(itens) - len(tokens)
-            texto = ", ".join(tokens) + (f"... (+{restante})" if restante > 0 else "")
-        return f"{nome_brinquedo} ({texto})"
-
     def brinquedos_da_reserva(reserva_row) -> list:
         return [b.strip() for b in str(reserva_row["brinquedos"]).split(",") if b.strip()]
 
+    def estado_previo(reserva_id: int, brinquedo: str, tipo: str) -> dict:
+        """dict item->bool (ok) do que já foi salvo para (reserva, brinquedo, etapa)."""
+        if checklist is None or checklist.empty:
+            return {}
+        df_prev = checklist[
+            (checklist["reserva_id"] == reserva_id) &
+            (checklist["brinquedo"].str.lower() == str(brinquedo).lower()) &
+            (checklist["tipo"] == tipo)
+        ]
+        if df_prev.empty:
+            return {}
+        return {row["item"]: (row["ok"] == "✅") for _, row in df_prev.iterrows()}
+
     def progresso_etapa(reserva_id: int, tipo: str, brinquedos_lista: list) -> tuple:
-        """Retorna (completos, total, progresso%) para a etapa."""
+        """(completos, total, progresso%) para a etapa."""
         if checklist is None or checklist.empty:
             return 0, len(brinquedos_lista), 0.0
         brinq_completos = (
@@ -2234,23 +2224,55 @@ def pagina_checklist():
         prog = (brinq_completos / total * 100) if total > 0 else 0.0
         return brinq_completos, total, prog
 
-    def estado_previo(reserva_id: int, brinquedo: str, tipo: str) -> dict:
-        """Retorna dict item->bool (ok) do que já foi salvo para (reserva, brinquedo, etapa)."""
-        if checklist is None or checklist.empty:
-            return {}
-        df_prev = checklist[
-            (checklist["reserva_id"] == reserva_id) &
-            (checklist["brinquedo"].str.lower() == str(brinquedo).lower()) &
-            (checklist["tipo"] == tipo)
-        ]
-        if df_prev.empty:
-            return {}
-        return {row["item"]: (row["ok"] == "✅") for _, row in df_prev.iterrows()}
+    def status_ok_total(reserva_id: int, brinquedo: str, tipo: str, itens_ref: list):
+        """(ok, total, completo) para exibir status do brinquedo na etapa."""
+        prev = estado_previo(reserva_id, brinquedo, tipo)
+        if itens_ref:
+            total = len(itens_ref)
+            ok = sum(1 for item in itens_ref if prev.get(item, False))
+        else:
+            total = 1
+            ok = 1 if prev.get("No carro", False) else 0
+        completo = (total > 0 and ok == total)
+        return ok, total, completo
+
+    def build_brinquedo_label(nome_brinquedo: str, ok: int, total: int, itens: list) -> str:
+        """
+        Ex.: 'Pula-pula — ⏳ 3/5 (lona, molas, ...)' ou '(sem peças)'
+        """
+        # Badge
+        if total == 0:
+            badge = "— 0/0"
+        elif ok == total:
+            badge = f"✅ {ok}/{total}"
+        elif ok == 0:
+            badge = f"— 0/{total}"
+        else:
+            badge = f"⏳ {ok}/{total}"
+
+        # Peças entre parênteses
+        if not itens:
+            sufixo = "(sem peças)"
+        else:
+            texto = ", ".join(itens)
+            if len(texto) > 80:
+                tokens, total_len = [], 0
+                for t in itens:
+                    add = (2 if tokens else 0) + len(t)
+                    if total_len + add > 80:
+                        break
+                    tokens.append(t)
+                    total_len += add
+                restante = len(itens) - len(tokens)
+                texto = ", ".join(tokens) + (f"... (+{restante})" if restante > 0 else "")
+            sufixo = f"({texto})"
+
+        return f"{nome_brinquedo} — {badge} {sufixo}"
 
     def salvar_checklist_reserva_brinquedo(reserva_id: int, cliente: str, brinquedo: str,
                                            tipo: str, itens_dict: dict, observacao: str,
                                            usuario_logado: str):
-        """Reescreve as linhas de (reserva_id, brinquedo, tipo) no checklist com os novos checks."""
+        """Reescreve as linhas de (reserva, brinquedo, etapa) com os novos checks."""
         tz_sp = pytz.timezone("America/Sao_Paulo")
         data_hora = datetime.now(tz_sp).strftime("%Y-%m-%d %H:%M")
 
@@ -2286,24 +2308,42 @@ def pagina_checklist():
             final = novos_df
 
         salvar_dados(final, "checklist")
-        return novos_df  # retorna para atualizar status na tela
+        return novos_df
 
-    def status_brinquedo_resumo(reserva_id: int, brinquedo: str, tipo: str, itens_ref: list) -> tuple:
-        """
-        Retorna (ok, total, completo_bool) para exibir status do brinquedo na etapa.
-        Usa checklist salvo + lista de itens de referência (peças atuais).
-        """
-        prev = estado_previo(reserva_id, brinquedo, tipo)
-        total = max(len(itens_ref), len(prev)) if (len(prev) > len(itens_ref)) else len(itens_ref)
-        ok = sum(1 for item in itens_ref if prev.get(item, False))
-        completo = (total > 0 and ok == total)
-        return ok, total, completo
+    def proximo_pendente_label(reserva_id: int, tipo_code: str, brinquedos_lista: list):
+        """Retorna o label do próximo brinquedo não completo (ou None)."""
+        candidatos = []
+        for b in brinquedos_lista:
+            itens_b = pecas_map.get(b, [])
+            ok, total, completo = status_ok_total(reserva_id, b, tipo_code, itens_b)
+            if not completo:
+                candidatos.append((ok, total, b, itens_b))
+        if not candidatos:
+            return None
+        # pendentes com menor ok/total primeiro
+        candidatos.sort(key=lambda t: (t[0] / (t[1] if t[1] else 1), t[2].lower()))
+        ok, total, b, itens_b = candidatos[0]
+        return build_brinquedo_label(b, ok, total, itens_b)
+
+    def peca_existe(pecas_df: pd.DataFrame, brinquedo: str, item: str) -> bool:
+        """Checagem case-insensitive e trim para evitar duplicatas (compatível com seu índice único)."""
+        if pecas_df is None or pecas_df.empty:
+            return False
+        mask = (
+            (pecas_df["Brinquedo"].str.strip().str.lower() == str(brinquedo).strip().lower()) &
+            (pecas_df["Item"].str.strip().str.lower() == str(item).strip().lower())
+        )
+        return bool(mask.any())
+
+    # ========================================
+    # PAGE TABS
+    # ========================================
+    aba1, aba2 = st.tabs(["✅ Realizar Check-list", "🧩 Cadastrar Peças"])
 
     # ================================
-    # ✅ ABA 1 - REALIZAR CHECK-LIST (com 3 sub-abas por etapa)
+    # ✅ ABA 1 - REALIZAR CHECK-LIST
     # ================================
     with aba1:
-        # Seleciona reserva (mantém seleção via session_state)
         sel_reserva_label = st.selectbox(
             "Selecione a reserva:",
             reservas["label"],
@@ -2320,12 +2360,12 @@ def pagina_checklist():
             st.warning("⚠️ Esta reserva não possui brinquedos listados.")
             st.stop()
 
-        # ------ Sub-abas da etapa ------
+        # ------ Sub-abas por etapa ------
         tab_mont, tab_ent, tab_ret = st.tabs([x[0] for x in STAGES])
 
         def etapa_ui(container, tipo_label: str, tipo_code: str):
             with container:
-                # ======== CARD DE ANDAMENTO (por etapa) ========
+                # ======== CARD DE ANDAMENTO ========
                 brinq_completos, total_brinquedos, progresso = progresso_etapa(reserva_id, tipo_code, brinquedos_lista)
                 if brinq_completos == total_brinquedos and total_brinquedos > 0:
                     cor, icone, texto = "#2ECC71", "✅", f"Etapa '{tipo_code}' concluída!"
@@ -2355,18 +2395,30 @@ def pagina_checklist():
                     </div>
                 """, unsafe_allow_html=True)
 
-                # ======== SELEÇÃO DE BRINQUEDO (com peças entre parênteses no label) ========
-                # Mapeia labels -> brinquedo
-                labels = [build_brinquedo_label(b) for b in brinquedos_lista]
-                label_to_b = {lab: b for lab, b in zip(labels, brinquedos_lista)}
+                # ======== SELECT do brinquedo (com status no label) ========
+                lista_labels = []
+                for b in brinquedos_lista:
+                    itens_b = pecas_map.get(b, [])
+                    ok, total, completo = status_ok_total(reserva_id, b, tipo_code, itens_b)
+                    label = build_brinquedo_label(b, ok, total, itens_b)
+                    # 0 pendente/nao iniciado, 1 parcial, 2 completo
+                    if total == 0 or ok == 0:
+                        status_order = 0
+                    elif ok < total:
+                        status_order = 1
+                    else:
+                        status_order = 2
+                    lista_labels.append((status_order, label, b, itens_b))
+
+                # PENDENTES primeiro
+                lista_labels.sort(key=lambda x: (x[0], x[1].lower()))
+
+                labels = [t[1] for t in lista_labels]
+                label_to_b = {lab: (b, itens_b) for _, lab, b, itens_b in lista_labels}
 
                 ss_key_sel = f"sel_brinquedo_{tipo_code}_{reserva_id}"
                 current_label = st.session_state.get(ss_key_sel)
-
-                if current_label not in labels:
-                    current_index = 0
-                else:
-                    current_index = labels.index(current_label)
+                current_index = labels.index(current_label) if current_label in labels else 0
 
                 label_escolhido = st.selectbox(
                     f"{tipo_label}: selecione o brinquedo",
@@ -2374,68 +2426,54 @@ def pagina_checklist():
                     index=current_index,
                     key=ss_key_sel
                 )
-                brinquedo_sel = label_to_b[label_escolhido]
+                brinquedo_sel, itens_brinquedo = label_to_b[label_escolhido]
 
-                # ======== ITENS/PEÇAS DO BRINQUEDO ========
-                itens_brinquedo = pecas_map.get(brinquedo_sel, [])
+                # ======== STATUS atual (antes de marcar)
+                ok_atual, total_atual, completo_atual = status_ok_total(reserva_id, brinquedo_sel, tipo_code, itens_brinquedo)
+                badge_atual = "✅ Completo" if completo_atual else ("⏳ Parcial" if ok_atual > 0 else "— Não iniciado")
+                st.caption(f"Status atual de **{brinquedo_sel}** em **{tipo_code}**: {badge_atual} — {ok_atual}/{total_atual} itens.")
+
+                # ======== ITENS/PEÇAS DO BRINQUEDO (ou marcação geral se sem peças)
+                prev = estado_previo(reserva_id, brinquedo_sel, tipo_code)
                 if not itens_brinquedo:
                     st.warning("⚠️ Nenhuma peça cadastrada para este brinquedo. Cadastre em '🧩 Cadastrar Peças'.")
-                    # Ainda assim permite uma marcação geral para não bloquear o processo
-                    prev = estado_previo(reserva_id, brinquedo_sel, tipo_code)
-                    geral_ok = st.checkbox("No carro / Conferido (marcação geral)", value=prev.get("No carro", False),
-                                           key=f"chk_{tipo_code}_{reserva_id}_{brinquedo_sel}_geral")
-                    observacao = st.text_area("Observações (opcional):", key=f"obs_{tipo_code}_{reserva_id}_{brinquedo_sel}")
-                    usuario_logado = st.session_state.get("usuario", "Usuário não identificado")
-
-                    if st.button("💾 Salvar", key=f"btn_salvar_{tipo_code}_{reserva_id}_{brinquedo_sel}"):
-                        with st.spinner("Salvando..."):
-                            novos_df = salvar_checklist_reserva_brinquedo(
-                                reserva_id, cliente, brinquedo_sel, tipo_code,
-                                {"No carro": geral_ok}, observacao, usuario_logado
+                    geral_ok = st.checkbox(
+                        "No carro / Conferido (marcação geral)",
+                        value=prev.get("No carro", False),
+                        key=f"chk_{tipo_code}_{reserva_id}_{brinquedo_sel}_geral"
+                    )
+                    checks = {"No carro": geral_ok}
+                else:
+                    cols = st.columns(2)
+                    checks = {}
+                    for i, item in enumerate(itens_brinquedo):
+                        with cols[i % 2]:
+                            checks[item] = st.checkbox(
+                                item,
+                                value=prev.get(item, False),
+                                key=f"chk_{tipo_code}_{reserva_id}_{brinquedo_sel}_{i}"
                             )
-                            st.success("✅ Check-list salvo com sucesso!")
-                            # Atualiza status do brinquedo na tela (sem depender do rerun)
-                            ok, total, completo = status_brinquedo_resumo(reserva_id, brinquedo_sel, tipo_code, ["No carro"])
-                            badge = "✅ Completo" if completo else "❌ Parcial"
-                            st.info(f"Status do brinquedo **{brinquedo_sel}** nesta etapa: {badge} — {ok}/{total} itens.")
-                            st.rerun()
-                    return  # evita renderizar abaixo sem itens
-
-                # ======== CHECKBOXES por peça (pré-preenchidos com estado salvo) ========
-                prev = estado_previo(reserva_id, brinquedo_sel, tipo_code)
-                cols = st.columns(2)
-                checks = {}
-                for i, item in enumerate(itens_brinquedo):
-                    with cols[i % 2]:
-                        checks[item] = st.checkbox(
-                            item,
-                            value=prev.get(item, False),
-                            key=f"chk_{tipo_code}_{reserva_id}_{brinquedo_sel}_{i}"
-                        )
 
                 observacao = st.text_area("Observações (opcional):", key=f"obs_{tipo_code}_{reserva_id}_{brinquedo_sel}")
                 usuario_logado = st.session_state.get("usuario", "Usuário não identificado")
 
-                # ======== BOTÃO SALVAR ========
+                # ======== Salvar
                 if st.button("💾 Salvar", key=f"btn_salvar_{tipo_code}_{reserva_id}_{brinquedo_sel}"):
                     with st.spinner("Salvando..."):
-                        novos_df = salvar_checklist_reserva_brinquedo(
+                        salvar_checklist_reserva_brinquedo(
                             reserva_id, cliente, brinquedo_sel, tipo_code,
                             checks, observacao, usuario_logado
                         )
                         st.success("✅ Check-list salvo com sucesso!")
-                        # Mostra status atualizado do brinquedo
-                        ok, total, completo = status_brinquedo_resumo(reserva_id, brinquedo_sel, tipo_code, itens_brinquedo)
-                        badge = "✅ Completo" if completo else "❌ Parcial"
-                        st.info(f"Status do brinquedo **{brinquedo_sel}** nesta etapa: {badge} — {ok}/{total} itens.")
+
+                        # Avança automaticamente para o PRÓXIMO pendente
+                        prox_label = proximo_pendente_label(reserva_id, tipo_code, brinquedos_lista)
+                        if prox_label:
+                            st.session_state[ss_key_sel] = prox_label
+                        # Recarrega para atualizar barra e labels
                         st.rerun()
 
-                # ======== STATUS ATUAL (mesmo sem salvar agora) ========
-                ok, total, completo = status_brinquedo_resumo(reserva_id, brinquedo_sel, tipo_code, itens_brinquedo)
-                badge = "✅ Completo" if completo else "❌ Parcial"
-                st.caption(f"💡 Status atual deste brinquedo em **{tipo_code}**: {badge} — {ok}/{total} itens.")
-
-                # ======== HISTÓRICO (da reserva inteira) ========
+                # ======== Histórico (da reserva)
                 st.divider()
                 st.subheader("📜 Histórico de check-lists (reserva)")
                 hist = checklist[checklist["reserva_id"] == reserva_id] if (checklist is not None and not checklist.empty) else pd.DataFrame()
@@ -2447,13 +2485,13 @@ def pagina_checklist():
                         use_container_width=True, hide_index=True
                     )
 
-        # Renderiza as 3 etapas com o mesmo padrão
+        # Renderiza as 3 etapas
         etapa_ui(tab_mont, "Montagem do carro", "Montagem")
         etapa_ui(tab_ent, "Entrega (Saída)", "Entrega")
         etapa_ui(tab_ret, "Retirada (Volta)", "Retirada")
 
     # ========================================
-    # 🧩 ABA 2 - CADASTRAR PEÇAS (corrigida)
+    # 🧩 ABA 2 - CADASTRAR PEÇAS (com prevenção de duplicatas)
     # ========================================
     with aba2:
         st.subheader("🧩 Cadastro de Peças por Brinquedo")
@@ -2472,14 +2510,20 @@ def pagina_checklist():
                 if not nova_peca:
                     st.warning("Informe o nome da peça.")
                 else:
-                    nova_linha = pd.DataFrame([[brinquedo_novo, nova_peca]], columns=["Brinquedo", "Item"])
-                    pecas = pd.concat([pecas, nova_linha], ignore_index=True)
+                    # 🚫 Evita duplicata (compatível com índice único pecas_brinquedos_uniq)
+                    if peca_existe(pecas, brinquedo_novo, nova_peca):
+                        st.info(f"A peça **{nova_peca}** para o brinquedo **{brinquedo_novo}** já existe. Nada foi gravado.")
+                    else:
+                        nova_linha = pd.DataFrame([[brinquedo_novo, nova_peca]], columns=["Brinquedo", "Item"])
+                        pecas = pd.concat([pecas, nova_linha], ignore_index=True)
+                        # Segurança extra: drop de duplicatas normalizadas antes de salvar
+                        pecas["_bn"] = pecas["Brinquedo"].str.strip().str.lower()
+                        pecas["_it"] = pecas["Item"].str.strip().str.lower()
+                        pecas = pecas.drop_duplicates(subset=["_bn", "_it"], keep="first").drop(columns=["_bn", "_it"])
 
-                    # ✅ Correção: manter a assinatura (DataFrame, "tabela")
-                    salvar_dados(pecas, "pecas_brinquedos")
-
-                    st.success(f"✅ Peça '{nova_peca}' adicionada ao brinquedo '{brinquedo_novo}'!")
-                    st.rerun()
+                        salvar_dados(pecas, "pecas_brinquedos")
+                        st.success(f"✅ Peça '{nova_peca}' adicionada ao brinquedo '{brinquedo_novo}'!")
+                        st.rerun()
 
         total_pecas = len(pecas) if (pecas is not None) else 0
         total_brinquedos = pecas["Brinquedo"].nunique() if (pecas is not None and not pecas.empty) else 0
@@ -2504,6 +2548,7 @@ def pagina_checklist():
             )
         else:
             st.info("Nenhuma peça cadastrada ainda.")
+
 
 
 
