@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Iterable
 
 import pandas as pd
 import re
@@ -43,12 +43,39 @@ def _tabela_from_nome_arquivo(nome: str) -> str:
     return base.lower()
 
 
-def _chunked(iterable: List[Dict[str, Any]], size: int = 500):
+def _chunked(iterable: List[Dict[str, Any]], size: int = 500) -> Iterable[List[Dict[str, Any]]]:
     """Gera blocos (chunks) para upload em lotes."""
     for i in range(0, len(iterable), size):
         yield iterable[i:i + size]
 
 
+# ===================================================
+# NORMALIZAÇÃO E DETECÇÃO DE ERROS
+# ===================================================
+
+def _normalize_txt(x: Any) -> Any:
+    """Normaliza texto para evitar variações: trim + collapse spaces."""
+    if isinstance(x, str):
+        # remove espaços duplicados e aparas
+        x = " ".join(x.split()).strip()
+        return x
+    return x
+
+def _is_duplicate_error(err: Exception) -> bool:
+    """
+    Heurística para detectar violação de UNIQUE por mensagem do Postgres/PostgREST.
+    Tipicamente contém: 409 / 23505 / 'duplicate key value'.
+    """
+    msg = str(err) if err else ""
+    msg_low = msg.lower()
+    return (
+        "duplicate key value" in msg_low
+        or "status_code=409" in msg_low
+        or " 409 " in msg_low
+        or "23505" in msg_low
+        or '"code":"23505"' in msg_low
+        or "'code': '23505'" in msg_low
+    )
 
 
 # ===================================================
@@ -101,63 +128,89 @@ def carregar_dados(nome_arquivo_ou_tabela: str, colunas: List[str]) -> pd.DataFr
     return _ensure_columns(df, colunas)
 
 
-def salvar_dados(df, nome_tabela):
+def _prepare_df_for_rest(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Salva um DataFrame no Supabase usando UPSERT linha a linha.
-    Não apaga a tabela inteira.
+    Normaliza um DataFrame para envio via REST:
+    - converte datetimes para string
+    - troca NaN por None
+    - normaliza textos
+    - não mexe em 'id' (exceto remoção opcional mais abaixo)
     """
+    from datetime import date, datetime as _dt
 
-    import json
-    from datetime import date, datetime
-
-    tabela = _tabela_from_nome_arquivo(nome_tabela)
-
-    # --- Normalização ---
-    df = df.copy()
+    out = df.copy()
 
     # Datas → string
-    for col in df.columns:
-        if pd.api.types.is_datetime64_any_dtype(df[col]):
-            df[col] = df[col].dt.strftime("%Y-%m-%d")
-        elif df[col].dtype == object:
-            df[col] = df[col].apply(
+    for col in out.columns:
+        if pd.api.types.is_datetime64_any_dtype(out[col]):
+            out[col] = out[col].dt.strftime("%Y-%m-%d")
+        elif out[col].dtype == object:
+            out[col] = out[col].apply(
                 lambda x: x.strftime("%Y-%m-%d")
-                if isinstance(x, (date, datetime))
-                else x
+                if isinstance(x, (date, _dt))
+                else _normalize_txt(x)
             )
 
     # Remove NaN → None
-    df = df.where(pd.notnull(df), None)
+    out = out.where(pd.notnull(out), None)
+    return out
 
-    # Corrige ID
+
+def salvar_dados(df: pd.DataFrame, nome_tabela: str) -> None:
+    """
+    Salva dados no Supabase.
+    - Para a MAIORIA das tabelas: UPSERT linha a linha (via table_upsert)
+    - EXCEÇÃO: 'pecas_brinquedos' -> insere **apenas** novas linhas (ignora duplicadas),
+      evitando regravar a tabela inteira e eliminando 409 ao existir índice único funcional.
+    """
+    tabela = _tabela_from_nome_arquivo(nome_tabela)
+    if df is None or df.empty:
+        st.info(f"ℹ️ Nada para salvar em '{tabela}'.")
+        return
+
+    # Normalização padrão
+    df = _prepare_df_for_rest(df)
+
+    # Remover coluna 'id' se existir (para não conflitar em UPSERTs sem PK controlada)
     if "id" in df.columns:
         df = df.drop(columns=["id"])
 
     registros = df.to_dict(orient="records")
 
-    # --- SALVA LINHA A LINHA ---
+    # --- Estratégia específica para pecas_brinquedos ---
+    if tabela == "pecas_brinquedos":
+        inseridos = 0
+        ignorados = 0
+        for reg in registros:
+            # Normalização de segurança
+            b = _normalize_txt(reg.get("Brinquedo", ""))
+            i = _normalize_txt(reg.get("Item", ""))
+            if not b or not i:
+                continue
+            try:
+                table_insert(tabela, [{"Brinquedo": b, "Item": i}])
+                inseridos += 1
+            except Exception as e:
+                if _is_duplicate_error(e):
+                    # Já existe -> ignorar silenciosamente
+                    ignorados += 1
+                    continue
+                st.error(f"❌ Erro ao salvar peça {reg}: {e}")
+                logging.exception("Erro salvar_dados pecas_brinquedos")
+                raise
+        st.toast(f"💾 Peças salvas: {inseridos}. Duplicadas ignoradas: {ignorados}.", icon="✅")
+        return
+
+    # --- Tabelas comuns: UPSERT linha a linha ---
     for reg in registros:
-        # Se o ID estiver vazio, PULA para não quebrar o Supabase
-        if "id" in reg and (reg["id"] is None):
-            print("⚠️ Linha ignorada por ID vazio:", reg)
-            continue
-
-        # Garantir JSON válido
-        json.dumps(reg)
-
-        # Upsert por linha
         try:
             table_upsert(tabela, [reg])
         except Exception as e:
             st.error(f"❌ Erro ao salvar registro {reg}: {e}")
+            logging.exception("Erro em salvar_dados(%s)", tabela)
             raise
 
-    print(f"✅ Tabela '{tabela}' salva com {len(registros)} registros.")
-
-
-
-
-
+    st.toast(f"✅ Tabela '{tabela}' salva com {len(registros)} registro(s).", icon="💾")
 
 
 # ===================================================
@@ -167,12 +220,42 @@ def salvar_dados(df, nome_tabela):
 def inserir_um(tabela_ou_csv: str, registro: Dict[str, Any]) -> None:
     """Insere uma única linha na tabela informada."""
     tabela = _tabela_from_nome_arquivo(tabela_ou_csv)
+    reg = {k: _normalize_txt(v) for k, v in (registro or {}).items()}
     try:
-        table_insert(tabela, [registro])
+        table_insert(tabela, [reg])
         st.toast("✅ Registro inserido com sucesso.", icon="💾")
     except Exception as e:
+        if _is_duplicate_error(e):
+            st.info("ℹ️ Registro já existia (duplicado). Nenhuma alteração realizada.")
+            return
         logging.exception("Erro em inserir_um(%s)", tabela)
         st.error(f"❌ Erro ao inserir em '{tabela}': {e}")
+        raise
+
+
+def inserir_peca_unica(brinquedo: str, item: str) -> bool:
+    """
+    Insere UMA peça em public.pecas_brinquedos.
+    - Normaliza os textos
+    - Se já existir (índice UNIQUE funcional), ignora e retorna False
+    - Retorna True se inseriu de fato
+    """
+    tabela = "pecas_brinquedos"
+    b = _normalize_txt(brinquedo)
+    i = _normalize_txt(item)
+    if not b or not i:
+        raise ValueError("Brinquedo e Item são obrigatórios.")
+
+    try:
+        table_insert(tabela, [{"Brinquedo": b, "Item": i}])
+        st.toast(f"✅ Peça '{i}' adicionada ao brinquedo '{b}'.", icon="🧩")
+        return True
+    except Exception as e:
+        if _is_duplicate_error(e):
+            st.info(f"ℹ️ A peça **{i}** para o brinquedo **{b}** já existia. Nada foi gravado.")
+            return False
+        logging.exception("Erro em inserir_peca_unica(%s)", tabela)
+        st.error(f"❌ Erro ao inserir peça '{i}' em '{b}': {e}")
         raise
 
 
@@ -180,12 +263,14 @@ def atualizar_um(tabela_ou_csv: str, filtro: Dict[str, Any], campos: Dict[str, A
     """Atualiza registros que casam com 'filtro'."""
     tabela = _tabela_from_nome_arquivo(tabela_ou_csv)
     try:
-        table_update(tabela, filtro, campos)
+        table_update(tabela, filtro, {k: _normalize_txt(v) for k, v in campos.items()})
         st.toast("🔄 Atualizado!", icon="✅")
     except Exception as e:
         logging.exception("Erro em atualizar_um(%s)", tabela)
         st.error(f"❌ Erro ao atualizar '{tabela}': {e}")
         raise
+
+
 def atualizar_por_filtro(tabela_ou_csv: str, novos_dados: dict, filtro: dict) -> None:
     """
     Atualiza registros conforme filtro (WHERE).
@@ -193,8 +278,7 @@ def atualizar_por_filtro(tabela_ou_csv: str, novos_dados: dict, filtro: dict) ->
     """
     tabela = _tabela_from_nome_arquivo(tabela_ou_csv)
     try:
-        # table_update(tabela, where=filtro, values=novos_dados)
-        table_update(tabela, filtro, novos_dados)
+        table_update(tabela, filtro, {k: _normalize_txt(v) for k, v in novos_dados.items()})
         st.toast("🔄 Registro atualizado!", icon="✅")
     except Exception as e:
         logging.exception("Erro em atualizar_por_filtro(%s)", tabela)
@@ -268,3 +352,4 @@ def _ensure_cols(df, cols, defaults=None):
     except TypeError:
         # fallback para chamadas antigas sem defaults
         return _ensure_columns(df, cols)
+``
