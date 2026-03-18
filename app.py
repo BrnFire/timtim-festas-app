@@ -2505,9 +2505,7 @@ def pagina_checklist():
                 hist = checklist[checklist["reserva_id"] == reserva_id] if (checklist is not None and not checklist.empty) else pd.DataFrame()
                 if hist.empty:
                     st.info("Nenhum check-list registrado para esta reserva ainda.")
-                else:
-                    # mostra mais recente primeiro (executado_em / data)
-                    order_cols = [c for c in ["executado_em", "data",
+
 
 
 
