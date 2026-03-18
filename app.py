@@ -2126,13 +2126,13 @@ def pagina_agenda():
     # PAGINA CHECK LIST
     # ========================================
 
-
 def pagina_checklist():
     import pandas as pd
     from datetime import datetime
     import pytz
     import streamlit as st
-    from banco import carregar_dados, salvar_dados
+    # ⬇️ inclui inserir_peca_unica para a aba de peças
+    from banco import carregar_dados, salvar_dados, inserir_peca_unica
 
     st.header("📋 Check-list de Brinquedos")
 
@@ -2142,10 +2142,11 @@ def pagina_checklist():
     reservas = carregar_dados("reservas", ["id", "cliente", "brinquedos", "data", "status"])
     brinquedos_cadastrados = carregar_dados("brinquedos", ["nome"])
     pecas = carregar_dados("pecas_brinquedos", ["Brinquedo", "Item"])
+    # ⬇️ inclui 'executado_em' para suportar histórico (Modelo B)
     checklist = carregar_dados(
         "checklist",
         ["reserva_id", "cliente", "brinquedo", "tipo", "item", "ok",
-         "data", "observacao", "conferido_por", "completo"]
+         "data", "observacao", "conferido_por", "completo", "executado_em"]
     )
 
     if reservas is None or reservas.empty:
@@ -2159,8 +2160,9 @@ def pagina_checklist():
         "reservas": ["id", "cliente", "brinquedos", "data", "status"],
         "brinquedos_cadastrados": ["nome"],
         "pecas": ["Brinquedo", "Item"],
+        # ⬇️ garante executado_em
         "checklist": ["reserva_id", "cliente", "brinquedo", "tipo", "item", "ok",
-                      "data", "observacao", "conferido_por", "completo"],
+                      "data", "observacao", "conferido_por", "completo", "executado_em"],
     }.items():
         try:
             df_check = eval(df)
@@ -2197,32 +2199,52 @@ def pagina_checklist():
         return [b.strip() for b in str(reserva_row["brinquedos"]).split(",") if b.strip()]
 
     def estado_previo(reserva_id: int, brinquedo: str, tipo: str) -> dict:
-        """dict item->bool (ok) do que já foi salvo para (reserva, brinquedo, etapa)."""
+        """
+        dict item->bool (ok) do que já foi salvo para (reserva, brinquedo, etapa).
+        Usa a ÚLTIMA versão por item (Modelo B) priorizando 'executado_em'; fallback para 'data'.
+        """
         if checklist is None or checklist.empty:
             return {}
         df_prev = checklist[
             (checklist["reserva_id"] == reserva_id) &
-            (checklist["brinquedo"].str.lower() == str(brinquedo).lower()) &
+            (checklist["brinquedo"].astype(str).str.lower() == str(brinquedo).lower()) &
             (checklist["tipo"] == tipo)
-        ]
+        ].copy()
         if df_prev.empty:
             return {}
-        return {row["item"]: (row["ok"] == "✅") for _, row in df_prev.iterrows()}
+
+        order_cols = []
+        if "executado_em" in df_prev.columns:
+            order_cols.append("executado_em")
+        if "data" in df_prev.columns:
+            try:
+                df_prev["_data_dt"] = pd.to_datetime(df_prev["data"], errors="coerce", utc=True)
+                order_cols.append("_data_dt")
+            except Exception:
+                order_cols.append("data")
+
+        if order_cols:
+            df_prev = df_prev.sort_values(order_cols, ascending=False)
+        else:
+            df_prev = df_prev.sort_values(df_prev.columns.tolist(), ascending=False)
+
+        df_ultimos = df_prev.drop_duplicates(subset=["item"], keep="first")
+        return {row["item"]: (row["ok"] == "✅") for _, row in df_ultimos.iterrows()}
 
     def progresso_etapa(reserva_id: int, tipo: str, brinquedos_lista: list) -> tuple:
-        """(completos, total, progresso%) para a etapa."""
-        if checklist is None or checklist.empty:
-            return 0, len(brinquedos_lista), 0.0
-        brinq_completos = (
-            checklist[
-                (checklist["reserva_id"] == reserva_id) &
-                (checklist["tipo"] == tipo) &
-                (checklist["completo"] == "✅")
-            ]["brinquedo"].nunique()
-        )
+        """
+        (completos, total, progresso%) para a etapa.
+        Completo = todas as peças do brinquedo marcadas na última versão.
+        """
+        completos = 0
+        for b in brinquedos_lista:
+            itens_b = pecas_map.get(b, [])
+            ok, total, comp = status_ok_total(reserva_id, b, tipo, itens_b)
+            if comp:
+                completos += 1
         total = len(brinquedos_lista)
-        prog = (brinq_completos / total * 100) if total > 0 else 0.0
-        return brinq_completos, total, prog
+        prog = (completos / total * 100) if total > 0 else 0.0
+        return completos, total, prog
 
     def status_ok_total(reserva_id: int, brinquedo: str, tipo: str, itens_ref: list):
         """(ok, total, completo) para exibir status do brinquedo na etapa."""
@@ -2271,15 +2293,26 @@ def pagina_checklist():
 
     def salvar_checklist_reserva_brinquedo(reserva_id: int, cliente: str, brinquedo: str,
                                            tipo: str, itens_dict: dict, observacao: str,
-                                           usuario_logado: str):
-        """Reescreve as linhas de (reserva, brinquedo, etapa) com os novos checks."""
+                                           usuario_logado: str) -> int:
+        """
+        🔄 MODELO B (histórico) + DELTA:
+        - Compara com a última versão (estado_previo).
+        - Insere (INSERT) apenas os itens que MUDARAM (evita duplicar estado idêntico).
+        - Retorna a quantidade de linhas inseridas.
+        """
         tz_sp = pytz.timezone("America/Sao_Paulo")
         data_hora = datetime.now(tz_sp).strftime("%Y-%m-%d %H:%M")
 
-        itens_checked = list(itens_dict.values())
-        completo_brinq = (len(itens_checked) > 0 and all(itens_checked))
+        prev = estado_previo(reserva_id, brinquedo, tipo)
+        itens_changed = {item: marcado for item, marcado in itens_dict.items()
+                         if prev.get(item, None) != marcado}
+
+        if not itens_changed:
+            return 0  # nada a salvar
+
+        completo_brinq = (len(itens_dict) > 0 and all(itens_dict.values()))
         registros = []
-        for item, marcado in itens_dict.items():
+        for item, marcado in itens_changed.items():
             registros.append({
                 "reserva_id": reserva_id,
                 "cliente": cliente,
@@ -2291,24 +2324,13 @@ def pagina_checklist():
                 "observacao": observacao,
                 "conferido_por": usuario_logado,
                 "completo": "✅" if completo_brinq else "❌",
+                # não enviar executado_em; o DB preenche (DEFAULT now())
             })
+
         novos_df = pd.DataFrame(registros)
-
-        # Remove registros antigos desse recorte e concatena os novos
-        if checklist is not None and not checklist.empty:
-            antigo_filtrado = checklist[
-                ~(
-                    (checklist["reserva_id"] == reserva_id) &
-                    (checklist["brinquedo"].str.lower() == str(brinquedo).lower()) &
-                    (checklist["tipo"] == tipo)
-                )
-            ]
-            final = pd.concat([antigo_filtrado, novos_df], ignore_index=True)
-        else:
-            final = novos_df
-
-        salvar_dados(final, "checklist")
-        return novos_df
+        # INSERT puro (Modelo B) — a função no banco já está preparada
+        salvar_dados(novos_df, "checklist")
+        return len(registros)
 
     def proximo_pendente_label(reserva_id: int, tipo_code: str, brinquedos_lista: list):
         """Retorna o label do próximo brinquedo não completo (ou None)."""
@@ -2317,16 +2339,18 @@ def pagina_checklist():
             itens_b = pecas_map.get(b, [])
             ok, total, completo = status_ok_total(reserva_id, b, tipo_code, itens_b)
             if not completo:
-                candidatos.append((ok, total, b, itens_b))
+                # menor progresso primeiro
+                ratio = (ok / total) if total else 0.0
+                candidatos.append((ratio, b, itens_b))
         if not candidatos:
             return None
-        # pendentes com menor ok/total primeiro
-        candidatos.sort(key=lambda t: (t[0] / (t[1] if t[1] else 1), t[2].lower()))
-        ok, total, b, itens_b = candidatos[0]
+        candidatos.sort(key=lambda t: (t[0], t[1].lower()))
+        _, b, itens_b = candidatos[0]
+        ok, total, _ = status_ok_total(reserva_id, b, tipo_code, itens_b)
         return build_brinquedo_label(b, ok, total, itens_b)
 
     def peca_existe(pecas_df: pd.DataFrame, brinquedo: str, item: str) -> bool:
-        """Checagem case-insensitive e trim para evitar duplicatas (compatível com seu índice único)."""
+        """Checagem case-insensitive e trim para evitar duplicatas (compatível com índice único)."""
         if pecas_df is None or pecas_df.empty:
             return False
         mask = (
@@ -2412,7 +2436,6 @@ def pagina_checklist():
 
                 # PENDENTES primeiro
                 lista_labels.sort(key=lambda x: (x[0], x[1].lower()))
-
                 labels = [t[1] for t in lista_labels]
                 label_to_b = {lab: (b, itens_b) for _, lab, b, itens_b in lista_labels}
 
@@ -2457,14 +2480,17 @@ def pagina_checklist():
                 observacao = st.text_area("Observações (opcional):", key=f"obs_{tipo_code}_{reserva_id}_{brinquedo_sel}")
                 usuario_logado = st.session_state.get("usuario", "Usuário não identificado")
 
-                # ======== Salvar
+                # ======== Salvar (apenas DELTA)
                 if st.button("💾 Salvar", key=f"btn_salvar_{tipo_code}_{reserva_id}_{brinquedo_sel}"):
                     with st.spinner("Salvando..."):
-                        salvar_checklist_reserva_brinquedo(
+                        qtd = salvar_checklist_reserva_brinquedo(
                             reserva_id, cliente, brinquedo_sel, tipo_code,
                             checks, observacao, usuario_logado
                         )
-                        st.success("✅ Check-list salvo com sucesso!")
+                        if qtd == 0:
+                            st.info("Nenhuma mudança detectada. Nada foi gravado.")
+                        else:
+                            st.success(f"✅ {qtd} item(ns) atualizado(s).")
 
                         # Avança automaticamente para o PRÓXIMO pendente
                         prox_label = proximo_pendente_label(reserva_id, tipo_code, brinquedos_lista)
@@ -2480,74 +2506,8 @@ def pagina_checklist():
                 if hist.empty:
                     st.info("Nenhum check-list registrado para esta reserva ainda.")
                 else:
-                    st.dataframe(
-                        hist.sort_values(["tipo", "brinquedo", "item"]),
-                        use_container_width=True, hide_index=True
-                    )
-
-        # Renderiza as 3 etapas
-        etapa_ui(tab_mont, "Montagem do carro", "Montagem")
-        etapa_ui(tab_ent, "Entrega (Saída)", "Entrega")
-        etapa_ui(tab_ret, "Retirada (Volta)", "Retirada")
-
-    # ========================================
-    # 🧩 ABA 2 - CADASTRAR PEÇAS (com prevenção de duplicatas)
-    # ========================================
-    with aba2:
-        st.subheader("🧩 Cadastro de Peças por Brinquedo")
-
-        opcoes_brinquedo = (
-            brinquedos_cadastrados["nome"].dropna().unique().tolist()
-            if (brinquedos_cadastrados is not None and not brinquedos_cadastrados.empty)
-            else []
-        )
-        if not opcoes_brinquedo:
-            st.info("Cadastre brinquedos primeiro na tabela 'brinquedos'.")
-        else:
-            brinquedo_novo = st.selectbox("Brinquedo:", opcoes_brinquedo, key="cad_peca_brinquedo")
-            nova_peca = st.text_input("Nome da peça:", key="cad_peca_nome")
-            if st.button("➕ Adicionar peça", key="cad_peca_btn"):
-                if not nova_peca:
-                    st.warning("Informe o nome da peça.")
-                else:
-                    # 🚫 Evita duplicata (compatível com índice único pecas_brinquedos_uniq)
-                    if peca_existe(pecas, brinquedo_novo, nova_peca):
-                        st.info(f"A peça **{nova_peca}** para o brinquedo **{brinquedo_novo}** já existe. Nada foi gravado.")
-                    else:
-                        nova_linha = pd.DataFrame([[brinquedo_novo, nova_peca]], columns=["Brinquedo", "Item"])
-                        pecas = pd.concat([pecas, nova_linha], ignore_index=True)
-                        # Segurança extra: drop de duplicatas normalizadas antes de salvar
-                        pecas["_bn"] = pecas["Brinquedo"].str.strip().str.lower()
-                        pecas["_it"] = pecas["Item"].str.strip().str.lower()
-                        pecas = pecas.drop_duplicates(subset=["_bn", "_it"], keep="first").drop(columns=["_bn", "_it"])
-
-                        salvar_dados(pecas, "pecas_brinquedos")
-                        st.success(f"✅ Peça '{nova_peca}' adicionada ao brinquedo '{brinquedo_novo}'!")
-                        st.rerun()
-
-        total_pecas = len(pecas) if (pecas is not None) else 0
-        total_brinquedos = pecas["Brinquedo"].nunique() if (pecas is not None and not pecas.empty) else 0
-
-        st.markdown(f"""
-            <div style="background-color:#f9f9f9;
-                        border-left:6px solid #7A5FFF;
-                        border-radius:10px;
-                        padding:12px 20px;
-                        margin-top:10px;
-                        box-shadow:2px 2px 8px rgba(0,0,0,0.1);">
-                <h4 style="margin:0;color:#7A5FFF;">
-                    🧩 {total_pecas} peças cadastradas para {total_brinquedos} brinquedos
-                </h4>
-            </div>
-        """, unsafe_allow_html=True)
-
-        if pecas is not None and not pecas.empty:
-            st.dataframe(
-                pecas.sort_values(["Brinquedo", "Item"]),
-                use_container_width=True, hide_index=True
-            )
-        else:
-            st.info("Nenhuma peça cadastrada ainda.")
+                    # mostra mais recente primeiro (executado_em / data)
+                    order_cols = [c for c in ["executado_em", "data",
 
 
 
