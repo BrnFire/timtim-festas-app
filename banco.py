@@ -1,152 +1,4 @@
-# banco.py — Camada de I/O no Supabase via REST (sem SDK)
-from __future__ import annotations
-
-import logging
-from typing import Dict, Any, List, Optional, Iterable
-
-import pandas as pd
-import re
-import requests
-
-# Usa streamlit se existir; senão, cria um "dummy" pra não quebrar em testes locais
-try:
-    import streamlit as st
-except Exception:
-    class _Dummy:
-        def __getattr__(self, name):
-            def _(*args, **kwargs):
-                return None
-            return _
-    st = _Dummy()  # type: ignore
-
-# Importa o wrapper REST que você criou
-from supabase_rest import (
-    table_select,
-    table_insert,
-    table_update,
-    table_delete,
-    table_upsert,
-)
-
-# ===================================================
-# HELPERS DE NOME DE TABELA / CHUNKS
-# ===================================================
-
-def _tabela_from_nome_arquivo(nome: str) -> str:
-    """
-    Converte 'reservas.csv' -> 'reservas'.
-    Mantém o nome se já vier sem .csv.
-    """
-    base = (nome or "").strip()
-    if base.lower().endswith(".csv"):
-        base = base[:-4]
-    return base.lower()
-
-
-def _chunked(iterable: List[Dict[str, Any]], size: int = 500) -> Iterable[List[Dict[str, Any]]]:
-    """Gera blocos (chunks) para upload em lotes."""
-    for i in range(0, len(iterable), size):
-        yield iterable[i:i + size]
-
-
-# ===================================================
-# NORMALIZAÇÃO E DETECÇÃO DE ERROS
-# ===================================================
-
-def _normalize_txt(x: Any) -> Any:
-    """Normaliza texto para evitar variações: trim + collapse spaces."""
-    if isinstance(x, str):
-        x = " ".join(x.split()).strip()
-        return x
-    return x
-
-def _norm_key_str(x: Any) -> str:
-    """Normalização para colunas *_norm (trim + collapse + lower)."""
-    if isinstance(x, str):
-        return " ".join(x.split()).strip().lower()
-    return "" if x is None else str(x).strip().lower()
-
-def _is_duplicate_error(err: Exception) -> bool:
-    """
-    Heurística para detectar violação de UNIQUE por mensagem do Postgres/PostgREST.
-    Tipicamente contém: 409 / 23505 / 'duplicate key value'.
-    """
-    msg = str(err) if err else ""
-    msg_low = msg.lower()
-    return (
-        "duplicate key value" in msg_low
-        or "status_code=409" in msg_low
-        or " 409 " in msg_low
-        or "23505" in msg_low
-        or '"code":"23505"' in msg_low
-        or "'code': '23505'" in msg_low
-    )
-
-
-# ===================================================
-# ENSURE COLUMNS (com defaults)
-# ===================================================
-
-def _ensure_columns(
-    df: pd.DataFrame,
-    colunas: Optional[List[str]],
-    defaults: Optional[Dict[str, Any]] = None
-) -> pd.DataFrame:
-    """
-    Garante colunas obrigatórias e aplica valores padrão se especificados.
-    Compatível com chamadas como _ensure_columns(df, cols, defaults={"valor": 0.0})
-    """
-    if defaults is None:
-        defaults = {}
-
-    if colunas is None:
-        return df.reset_index(drop=True)
-
-    for c in colunas:
-        if c not in df.columns:
-            df[c] = defaults.get(c, "")
-    return df[colunas].reset_index(drop=True)
-
-
-# ===================================================
-# PRINCIPAIS FUNÇÕES DE I/O (USANDO supabase_rest)
-# ===================================================
-
-def carregar_dados(nome_arquivo_ou_tabela: str, colunas: List[str]) -> pd.DataFrame:
-    """
-    Lê dados de uma tabela do Supabase via REST e retorna um DataFrame
-    com as colunas especificadas. Sempre retorna um DataFrame válido.
-    """
-    tabela = _tabela_from_nome_arquivo(nome_arquivo_ou_tabela)
-    df = pd.DataFrame(columns=colunas)
-
-    try:
-        dados = table_select(tabela)  # SELECT * FROM tabela
-        if dados:
-            df = pd.DataFrame(dados)
-        else:
-            st.warning(f"⚠️ Nenhum dado retornado da tabela '{tabela}'.")
-    except Exception as e:
-        logging.exception("Erro ao carregar dados da tabela %s", tabela)
-        st.error(f"❌ Erro ao carregar dados da tabela '{tabela}': {e}")
-
-    return _ensure_columns(df, colunas)
-
-
-def _prepare_df_for_rest(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Normaliza um DataFrame para envio via REST:
-    - converte datetimes para string (YYYY-MM-DD)
-    - troca NaN por None
-    - normaliza textos
-    """
-    from datetime import date, datetime as _dt
-
-    out = df.copy()
-
-    for col in out.columns:
-        if pd.api.types.is_datetime64_any_dtype(out[col]):
-            out[col] = out[col].dt.strftime("%Y-%m-%d")
+# banco.py — Camada de I/O no Supabase via REST (sem SDK)] = out[col].dt.strftime("%Y-%m-%d")
         elif out[col].dtype == object:
             out[col] = out[col].apply(
                 lambda x: x.strftime("%Y-%m-%d")
@@ -163,8 +15,7 @@ def salvar_dados(df: pd.DataFrame, nome_tabela: str) -> None:
     """
     Salva dados no Supabase.
     - pecas_brinquedos: INSERT 1 a 1, ignora duplicadas (evita 409 com índice funcional).
-    - checklist: **NÃO usa upsert**. Faz DELETE pelo par lógico normalizado e INSERT em seguida
-                 (determinístico contra UNIQUE em *_norm).
+    - checklist (MODELO B): INSERT puro (histórico). Não usa upsert, não usa delete.
     - demais tabelas: upsert linha a linha padrão.
     """
     tabela = _tabela_from_nome_arquivo(nome_tabela)
@@ -202,52 +53,29 @@ def salvar_dados(df: pd.DataFrame, nome_tabela: str) -> None:
         st.toast(f"💾 Peças salvas: {inseridos}. Duplicadas ignoradas: {ignorados}.", icon="✅")
         return
 
-    # ============= Estratégia específica: CHECKLIST =============
+    # ============= Estratégia específica: CHECKLIST (Modelo B - histórico) =============
     if tabela == "checklist":
-        ok_total = 0
+        gravados = 0
         for reg in registros:
-            # Normaliza textos do registro (o Postgres preenche *_norm automaticamente)
+            # Normaliza textos; deixa o DB preencher executado_em (DEFAULT now())
             reg = {k: _normalize_txt(v) for k, v in reg.items()}
 
-            # Cria chave normalizada no cliente (compatível com colunas *_norm)
-            chave = {
-                "reserva_id": reg.get("reserva_id"),
-                "brinquedo_norm": _norm_key_str(reg.get("brinquedo")),
-                "tipo_norm":      _norm_key_str(reg.get("tipo")),
-                "item_norm":      _norm_key_str(reg.get("item")),
-            }
+            # Não envie colunas geradas/derivadas
+            reg.pop("brinquedo_norm", None)
+            reg.pop("tipo_norm", None)
+            reg.pop("item_norm", None)
+            reg.pop("executado_em", None)
 
-            # 1) Apaga qualquer versão anterior dessa chave lógica
             try:
-                table_delete(
-                    tabela,
-                    {
-                        "reserva_id": chave["reserva_id"],
-                        "brinquedo_norm": chave["brinquedo_norm"],
-                        "tipo_norm": chave["tipo_norm"],
-                        "item_norm": chave["item_norm"],
-                    },
-                )
-            except Exception as e_del:
-                # Se não existir, alguns wrappers retornam 0 linhas; seguimos em frente
-                # Log opcional:
-                # logging.info("DELETE zero-matched para checklist: %s", chave)
-                pass
-
-            # 2) Insere a versão atual
-            try:
-                table_insert(tabela, [reg])
-                ok_total += 1
-            except Exception as e_ins:
-                # Em corrida (concorrência), se outro request inseriu no meio, pode dar 409 — ignore
-                if _is_duplicate_error(e_ins):
-                    # nada a fazer: já existe uma linha equivalente
-                    continue
-                st.error(f"❌ Erro ao salvar checklist {reg}: {e_ins}")
-                logging.exception("Erro salvar_dados checklist (insert)")
+                table_insert(tabela, [reg])  # INSERT puro (histórico)
+                gravados += 1
+            except Exception as e:
+                # Com histórico (sem UNIQUE), 409 não deve ocorrer; se ocorrer, mostramos
+                st.error(f"❌ Erro ao inserir checklist {reg}: {e}")
+                logging.exception("Erro inserir checklist (Modelo B)")
                 raise
 
-        st.toast(f"✅ Checklist: {ok_total} registro(s) atualizados.", icon="💾")
+        st.toast(f"✅ Checklist: {gravados} registro(s) inserido(s).", icon="💾")
         return
 
     # ============= Demais tabelas: upsert padrão linha a linha =============
@@ -401,3 +229,154 @@ def _ensure_cols(df, cols, defaults=None):
     except TypeError:
         # fallback para chamadas antigas sem defaults
         return _ensure_columns(df, cols)
+``
+# ---------------------------------------------------------------------------------
+# MODELO B (HISTÓRICO) PARA 'checklist':
+# - Não há UNIQUE no par (reserva_id, brinquedo, tipo, item).
+# - Cada salvamento gera uma NOVA linha (INSERT puro), preenchendo 'executado_em' no banco.
+# - A UI deve considerar SEMPRE a ÚLTIMA versão por item para mostrar status atual.
+# ---------------------------------------------------------------------------------
+
+from __future__ import annotations
+
+import logging
+from typing import Dict, Any, List, Optional, Iterable
+
+import pandas as pd
+import re
+import requests
+
+__BCO_VERSION__ = "banco.py/ModeloB-2026-03-18"
+
+# Usa streamlit se existir; senão, cria um "dummy" pra não quebrar em testes locais
+try:
+    import streamlit as st
+except Exception:
+    class _Dummy:
+        def __getattr__(self, name):
+            def _(*args, **kwargs):
+                return None
+            return _
+    st = _Dummy()  # type: ignore
+
+# Importa o wrapper REST que você criou (PostgREST)
+from supabase_rest import (
+    table_select,
+    table_insert,
+    table_update,
+    table_delete,
+    table_upsert,
+)
+
+# ===================================================
+# HELPERS DE NOME DE TABELA / CHUNKS
+# ===================================================
+
+def _tabela_from_nome_arquivo(nome: str) -> str:
+    """
+    Converte 'reservas.csv' -> 'reservas'.
+    Mantém o nome se já vier sem .csv.
+    """
+    base = (nome or "").strip()
+    if base.lower().endswith(".csv"):
+        base = base[:-4]
+    return base.lower()
+
+
+def _chunked(iterable: List[Dict[str, Any]], size: int = 500) -> Iterable[List[Dict[str, Any]]]:
+    """Gera blocos (chunks) para upload em lotes."""
+    for i in range(0, len(iterable), size):
+        yield iterable[i:i + size]
+
+
+# ===================================================
+# NORMALIZAÇÃO E DETECÇÃO DE ERROS
+# ===================================================
+
+def _normalize_txt(x: Any) -> Any:
+    """Normaliza texto para evitar variações: trim + collapse spaces."""
+    if isinstance(x, str):
+        x = " ".join(x.split()).strip()
+        return x
+    return x
+
+def _is_duplicate_error(err: Exception) -> bool:
+    """
+    Heurística para detectar violação de UNIQUE por mensagem do Postgres/PostgREST.
+    Tipicamente contém: 409 / 23505 / 'duplicate key value'.
+    """
+    msg = str(err) if err else ""
+    msg_low = msg.lower()
+    return (
+        "duplicate key value" in msg_low
+        or "status_code=409" in msg_low
+        or " 409 " in msg_low
+        or "23505" in msg_low
+        or '"code":"23505"' in msg_low
+        or "'code': '23505'" in msg_low
+    )
+
+
+# ===================================================
+# ENSURE COLUMNS (com defaults)
+# ===================================================
+
+def _ensure_columns(
+    df: pd.DataFrame,
+    colunas: Optional[List[str]],
+    defaults: Optional[Dict[str, Any]] = None
+) -> pd.DataFrame:
+    """
+    Garante colunas obrigatórias e aplica valores padrão se especificados.
+    Compatível com chamadas como _ensure_columns(df, cols, defaults={"valor": 0.0})
+    """
+    if defaults is None:
+        defaults = {}
+
+    if colunas is None:
+        return df.reset_index(drop=True)
+
+    for c in colunas:
+        if c not in df.columns:
+            df[c] = defaults.get(c, "")
+    return df[colunas].reset_index(drop=True)
+
+
+# ===================================================
+# PRINCIPAIS FUNÇÕES DE I/O (USANDO supabase_rest)
+# ===================================================
+
+def carregar_dados(nome_arquivo_ou_tabela: str, colunas: List[str]) -> pd.DataFrame:
+    """
+    Lê dados de uma tabela do Supabase via REST e retorna um DataFrame
+    com as colunas especificadas. Sempre retorna um DataFrame válido.
+    """
+    tabela = _tabela_from_nome_arquivo(nome_arquivo_ou_tabela)
+    df = pd.DataFrame(columns=colunas)
+
+    try:
+        dados = table_select(tabela)  # SELECT * FROM tabela
+        if dados:
+            df = pd.DataFrame(dados)
+        else:
+            st.warning(f"⚠️ Nenhum dado retornado da tabela '{tabela}'.")
+    except Exception as e:
+        logging.exception("Erro ao carregar dados da tabela %s", tabela)
+        st.error(f"❌ Erro ao carregar dados da tabela '{tabela}': {e}")
+
+    return _ensure_columns(df, colunas)
+
+
+def _prepare_df_for_rest(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Normaliza um DataFrame para envio via REST:
+    - converte datetimes para string (YYYY-MM-DD)
+    - troca NaN por None
+    - normaliza textos
+    """
+    from datetime import date, datetime as _dt
+
+    out = df.copy()
+
+    for col in out.columns:
+        if pd.api.types.is_datetime64_any_dtype(out[col]):
