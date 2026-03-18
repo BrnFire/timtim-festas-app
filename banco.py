@@ -56,10 +56,10 @@ def _chunked(iterable: List[Dict[str, Any]], size: int = 500) -> Iterable[List[D
 def _normalize_txt(x: Any) -> Any:
     """Normaliza texto para evitar variações: trim + collapse spaces."""
     if isinstance(x, str):
-        # remove espaços duplicados e aparas
         x = " ".join(x.split()).strip()
         return x
     return x
+
 
 def _is_duplicate_error(err: Exception) -> bool:
     """
@@ -140,7 +140,7 @@ def _prepare_df_for_rest(df: pd.DataFrame) -> pd.DataFrame:
 
     out = df.copy()
 
-    # Datas → string
+    # Datas → string (YYYY-MM-DD)
     for col in out.columns:
         if pd.api.types.is_datetime64_any_dtype(out[col]):
             out[col] = out[col].dt.strftime("%Y-%m-%d")
@@ -159,30 +159,29 @@ def _prepare_df_for_rest(df: pd.DataFrame) -> pd.DataFrame:
 def salvar_dados(df: pd.DataFrame, nome_tabela: str) -> None:
     """
     Salva dados no Supabase.
-    - Para a MAIORIA das tabelas: UPSERT linha a linha (via table_upsert)
-    - EXCEÇÃO: 'pecas_brinquedos' -> insere **apenas** novas linhas (ignora duplicadas),
-      evitando regravar a tabela inteira e eliminando 409 ao existir índice único funcional.
+    - pecas_brinquedos: insere 1 a 1 e ignora duplicadas (evita 409 com índice funcional).
+    - checklist: UPSERT usando on_conflict = (reserva_id, brinquedo_norm, tipo_norm, item_norm).
+                 Fallback: delete + insert do recorte quando on_conflict não for suportado.
+    - demais tabelas: upsert linha a linha padrão.
     """
     tabela = _tabela_from_nome_arquivo(nome_tabela)
     if df is None or df.empty:
         st.info(f"ℹ️ Nada para salvar em '{tabela}'.")
         return
 
-    # Normalização padrão
     df = _prepare_df_for_rest(df)
 
-    # Remover coluna 'id' se existir (para não conflitar em UPSERTs sem PK controlada)
+    # Evita conflitos com 'id'
     if "id" in df.columns:
         df = df.drop(columns=["id"])
 
     registros = df.to_dict(orient="records")
 
-    # --- Estratégia específica para pecas_brinquedos ---
+    # ============= Estratégia específica: PECAS_BRINQUEDOS =============
     if tabela == "pecas_brinquedos":
         inseridos = 0
         ignorados = 0
         for reg in registros:
-            # Normalização de segurança
             b = _normalize_txt(reg.get("Brinquedo", ""))
             i = _normalize_txt(reg.get("Item", ""))
             if not b or not i:
@@ -192,7 +191,6 @@ def salvar_dados(df: pd.DataFrame, nome_tabela: str) -> None:
                 inseridos += 1
             except Exception as e:
                 if _is_duplicate_error(e):
-                    # Já existe -> ignorar silenciosamente
                     ignorados += 1
                     continue
                 st.error(f"❌ Erro ao salvar peça {reg}: {e}")
@@ -201,155 +199,14 @@ def salvar_dados(df: pd.DataFrame, nome_tabela: str) -> None:
         st.toast(f"💾 Peças salvas: {inseridos}. Duplicadas ignoradas: {ignorados}.", icon="✅")
         return
 
-    # --- Tabelas comuns: UPSERT linha a linha ---
-    for reg in registros:
-        try:
-            table_upsert(tabela, [reg])
-        except Exception as e:
-            st.error(f"❌ Erro ao salvar registro {reg}: {e}")
-            logging.exception("Erro em salvar_dados(%s)", tabela)
-            raise
+    # ============= Estratégia específica: CHECKLIST =============
+    if tabela == "checklist":
+        ok_count = 0
+        fallback_count = 0
+        for reg in registros:
+            # Normaliza os campos textuais base (o Postgres vai gerar *_norm sozinho)
+            reg = {k: _normalize_txt(v) for k, v in reg.items()}
 
-    st.toast(f"✅ Tabela '{tabela}' salva com {len(registros)} registro(s).", icon="💾")
-
-
-# ===================================================
-# FUNÇÕES AUXILIARES (INSERIR / ATUALIZAR / DELETAR)
-# ===================================================
-
-def inserir_um(tabela_ou_csv: str, registro: Dict[str, Any]) -> None:
-    """Insere uma única linha na tabela informada."""
-    tabela = _tabela_from_nome_arquivo(tabela_ou_csv)
-    reg = {k: _normalize_txt(v) for k, v in (registro or {}).items()}
-    try:
-        table_insert(tabela, [reg])
-        st.toast("✅ Registro inserido com sucesso.", icon="💾")
-    except Exception as e:
-        if _is_duplicate_error(e):
-            st.info("ℹ️ Registro já existia (duplicado). Nenhuma alteração realizada.")
-            return
-        logging.exception("Erro em inserir_um(%s)", tabela)
-        st.error(f"❌ Erro ao inserir em '{tabela}': {e}")
-        raise
-
-
-def inserir_peca_unica(brinquedo: str, item: str) -> bool:
-    """
-    Insere UMA peça em public.pecas_brinquedos.
-    - Normaliza os textos
-    - Se já existir (índice UNIQUE funcional), ignora e retorna False
-    - Retorna True se inseriu de fato
-    """
-    tabela = "pecas_brinquedos"
-    b = _normalize_txt(brinquedo)
-    i = _normalize_txt(item)
-    if not b or not i:
-        raise ValueError("Brinquedo e Item são obrigatórios.")
-
-    try:
-        table_insert(tabela, [{"Brinquedo": b, "Item": i}])
-        st.toast(f"✅ Peça '{i}' adicionada ao brinquedo '{b}'.", icon="🧩")
-        return True
-    except Exception as e:
-        if _is_duplicate_error(e):
-            st.info(f"ℹ️ A peça **{i}** para o brinquedo **{b}** já existia. Nada foi gravado.")
-            return False
-        logging.exception("Erro em inserir_peca_unica(%s)", tabela)
-        st.error(f"❌ Erro ao inserir peça '{i}' em '{b}': {e}")
-        raise
-
-
-def atualizar_um(tabela_ou_csv: str, filtro: Dict[str, Any], campos: Dict[str, Any]) -> None:
-    """Atualiza registros que casam com 'filtro'."""
-    tabela = _tabela_from_nome_arquivo(tabela_ou_csv)
-    try:
-        table_update(tabela, filtro, {k: _normalize_txt(v) for k, v in campos.items()})
-        st.toast("🔄 Atualizado!", icon="✅")
-    except Exception as e:
-        logging.exception("Erro em atualizar_um(%s)", tabela)
-        st.error(f"❌ Erro ao atualizar '{tabela}': {e}")
-        raise
-
-
-def atualizar_por_filtro(tabela_ou_csv: str, novos_dados: dict, filtro: dict) -> None:
-    """
-    Atualiza registros conforme filtro (WHERE).
-    Mantém compatibilidade com chamadas antigas do app.
-    """
-    tabela = _tabela_from_nome_arquivo(tabela_ou_csv)
-    try:
-        table_update(tabela, filtro, {k: _normalize_txt(v) for k, v in novos_dados.items()})
-        st.toast("🔄 Registro atualizado!", icon="✅")
-    except Exception as e:
-        logging.exception("Erro em atualizar_por_filtro(%s)", tabela)
-        st.error(f"❌ Erro ao atualizar '{tabela}': {e}")
-        raise
-
-
-def deletar_por_filtro(tabela_ou_csv: str, filtro: Dict[str, Any]) -> None:
-    """Deleta registros que casem com o filtro informado."""
-    tabela = _tabela_from_nome_arquivo(tabela_ou_csv)
-    try:
-        table_delete(tabela, filtro)
-        st.toast("🗑️ Registro(s) excluído(s).", icon="✅")
-    except Exception as e:
-        logging.exception("Erro em deletar_por_filtro(%s)", tabela)
-        st.error(f"❌ Erro ao excluir em '{tabela}': {e}")
-        raise
-
-
-# ===================================================
-# FUNÇÃO EXTRA — DISTÂNCIA ENTRE CEPs
-# ===================================================
-
-def calcular_distancia_km(cep_origem, cep_destino):
-    """
-    Calcula a distância aproximada (em km) entre dois CEPs usando a API
-    Nominatim (OpenStreetMap). Retorna None se não for possível calcular.
-    """
-    try:
-        cep_origem = re.sub(r"\D", "", str(cep_origem))
-        cep_destino = re.sub(r"\D", "", str(cep_destino))
-
-        if not cep_origem or not cep_destino:
-            return None
-
-        def obter_coords(cep):
-            url = (
-                "https://nominatim.openstreetmap.org/search"
-                f"?postalcode={cep}&country=Brazil&format=json"
-            )
-            r = requests.get(url, headers={"User-Agent": "TimTimFestasApp"})
-            if r.status_code == 200 and r.json():
-                dados = r.json()[0]
-                return float(dados["lat"]), float(dados["lon"])
-            return None
-
-        origem = obter_coords(cep_origem)
-        destino = obter_coords(cep_destino)
-        if not origem or not destino:
-            return None
-
-        from geopy.distance import geodesic
-        return round(geodesic(origem, destino).km, 1)
-
-    except Exception as e:
-        print(f"Erro ao calcular distância: {e}")
-        return None
-
-
-# ===================================================
-# ✅ COMPATIBILIDADE — Alias para função antiga
-# ===================================================
-
-def _ensure_cols(df, cols, defaults=None):
-    """
-    Compatibilidade com versões antigas do app.
-    Redireciona para _ensure_columns com suporte a defaults.
-    """
-    try:
-        return _ensure_columns(df, cols, defaults)
-    except TypeError:
-        # fallback para chamadas antigas sem defaults
-        return _ensure_columns(df, cols)
-
+            # 1) Tenta upsert com alvo de conflito correto (campos gerados)
+            try:
+                # Seu wrapper supabase_rest.table_upsert precisa aceitar
