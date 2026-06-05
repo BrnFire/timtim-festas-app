@@ -3842,40 +3842,125 @@ def pagina_funcionarios():
 # =========================================
 # MÓDULO: CONTRATOS
 # =========================================
-from docx import Document
-from datetime import datetime
 
-def gerar_contrato():
-    doc = Document("modelos/contrato_modelo.docx")
+def pagina_contratos():
+    import streamlit as st
+    from docx import Document
+    import os
 
-    def substituir_texto(paragraphs, chave, valor):
-        for p in paragraphs:
-            if chave in p.text:
-                for run in p.runs:
-                    run.text = run.text.replace(chave, str(valor))
+    st.title("📄 Gerar Contratos")
 
-    for p in doc.paragraphs:
-        substituir_texto([p], "{{cliente_nome}}", dados["cliente"])
-        substituir_texto([p], "{{cliente_telefone}}", dados["telefone"])
-        substituir_texto([p], "{{cliente_cpf}}", dados["cpf"])
-        substituir_texto([p], "{{cliente_email}}", dados["email"])
-        substituir_texto([p], "{{cliente_rg}}", dados["rg"])
+    # =========================
+    # ✅ VERIFICAR MODELO
+    # =========================
+    caminho_modelo = "modelos/contrato_modelo.docx"
 
-        substituir_texto([p], "{{data_evento}}", dados["data"])
-        substituir_texto([p], "{{hora_entrega}}", dados["hora_entrega"])
-        substituir_texto([p], "{{hora_retirada}}", dados["hora_retirada"])
-        substituir_texto([p], "{{endereco}}", dados["endereco"])
+    if not os.path.exists(caminho_modelo):
+        st.error("❌ Arquivo modelo não encontrado em /modelos")
+        return
 
-        substituir_texto([p], "{{lista_brinquedos}}", dados["brinquedos"])
+    st.success("✅ Modelo carregado com sucesso")
 
-        substituir_texto([p], "{{valor_total}}", dados["valor_total"])
-        substituir_texto([p], "{{valor_entrada}}", dados["entrada"])
-        substituir_texto([p], "{{valor_restante}}", dados["restante"])
+    # =========================
+    # 🧾 FORMULÁRIO
+    # =========================
+    st.subheader("📋 Dados do Cliente")
 
-    nome_arquivo = f"contrato_{dados['cliente']}.docx"
-    doc.save(nome_arquivo)
+    col1, col2 = st.columns(2)
 
-    return nome_arquivo
+    with col1:
+        cliente = st.text_input("Nome do cliente")
+        cpf = st.text_input("CPF")
+        rg = st.text_input("RG")
+
+    with col2:
+        telefone = st.text_input("Telefone")
+        email = st.text_input("Email")
+
+    st.subheader("📅 Dados do Evento")
+
+    col3, col4 = st.columns(2)
+
+    with col3:
+        data_evento = st.date_input("Data do evento")
+        hora_entrega = st.text_input("Hora entrega (ex: 10:30)")
+
+    with col4:
+        hora_retirada = st.text_input("Hora retirada (ex: 17:30)")
+        endereco = st.text_input("Endereço completo")
+
+    st.subheader("🎠 Brinquedos")
+
+    brinquedos = st.text_area("Lista de brinquedos (separados por vírgula)")
+
+    st.subheader("💰 Valores")
+
+    col5, col6, col7 = st.columns(3)
+
+    with col5:
+        valor_total = st.number_input("Valor total", value=0.0)
+
+    with col6:
+        entrada = st.number_input("Entrada paga", value=0.0)
+
+    with col7:
+        restante = st.number_input("Restante", value=0.0)
+
+    # =========================
+    # 📄 GERAR CONTRATO
+    # =========================
+    if st.button("📄 Gerar contrato"):
+
+        try:
+            doc = Document(caminho_modelo)
+
+            def substituir(chave, valor):
+                for p in doc.paragraphs:
+                    if chave in p.text:
+                        for run in p.runs:
+                            run.text = run.text.replace(chave, str(valor))
+
+            # =========================
+            # 🔁 SUBSTITUIÇÕES
+            # =========================
+            substituir("{{cliente_nome}}", cliente)
+            substituir("{{cliente_cpf}}", cpf)
+            substituir("{{cliente_rg}}", rg)
+            substituir("{{cliente_telefone}}", telefone)
+            substituir("{{cliente_email}}", email)
+
+            substituir("{{data_evento}}", data_evento.strftime("%d/%m/%Y"))
+            substituir("{{hora_entrega}}", hora_entrega)
+            substituir("{{hora_retirada}}", hora_retirada)
+            substituir("{{endereco}}", endereco)
+
+            substituir("{{lista_brinquedos}}", brinquedos)
+
+            substituir("{{valor_total}}", f"{valor_total:,.2f}")
+            substituir("{{valor_entrada}}", f"{entrada:,.2f}")
+            substituir("{{valor_restante}}", f"{restante:,.2f}")
+
+            # =========================
+            # 💾 SALVAR
+            # =========================
+            nome_arquivo = f"contrato_{cliente.replace(' ', '_')}.docx"
+            doc.save(nome_arquivo)
+
+            st.success("✅ Contrato gerado com sucesso!")
+
+            # =========================
+            # ⬇ DOWNLOAD
+            # =========================
+            with open(nome_arquivo, "rb") as f:
+                st.download_button(
+                    label="⬇️ Baixar contrato",
+                    data=f,
+                    file_name=nome_arquivo,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+
+        except Exception as e:
+            st.error(f"❌ Erro ao gerar contrato: {e}")
 
 # ========================================
 # PAGINA CONTRATO FIM
