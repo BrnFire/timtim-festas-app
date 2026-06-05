@@ -1,4 +1,5 @@
 import streamlit as st
+st.write("teste")
 import pandas as pd
 import requests
 import os
@@ -6,7 +7,7 @@ import json
 import time 
 from datetime import datetime
 from dateutil import parser
-from banco import carregar_dados, salvar_dados
+# from banco import carregar_dados, salvar_dados
 from banco import _ensure_cols
 
 # ========================================
