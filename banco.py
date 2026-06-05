@@ -1,4 +1,5 @@
-# banco.py — Camada de I/O no Supabase via REST (sem SDK)] = out[col].dt.strftime("%Y-%m-%d")
+# banco.py — Camada de I/O no Supabase via REST (sem SDK)]
+out[col] = out[col].dt.strftime("%Y-%m-%d")
         elif out[col].dtype == object:
             out[col] = out[col].apply(
                 lambda x: x.strftime("%Y-%m-%d")
