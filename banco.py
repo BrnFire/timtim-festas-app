@@ -203,3 +203,48 @@ def calcular_distancia_km(cep_origem, cep_destino):
 
     except:
         return None
+
+# ==============================
+# FUNÇÕES QUE SEU APP ESPERA
+# ==============================
+
+def inserir_um(tabela_ou_csv: str, registro: Dict[str, Any]) -> None:
+    tabela = _tabela_from_nome_arquivo(tabela_ou_csv)
+    reg = {k: _normalize_txt(v) for k, v in registro.items()}
+    try:
+        table_insert(tabela, [reg])
+    except Exception as e:
+        if _is_duplicate_error(e):
+            return
+        raise
+
+
+def inserir_peca_unica(brinquedo: str, item: str) -> bool:
+    b = _normalize_txt(brinquedo)
+    i = _normalize_txt(item)
+
+    if not b or not i:
+        return False
+
+    try:
+        table_insert("pecas_brinquedos", [{"Brinquedo": b, "Item": i}])
+        return True
+    except Exception as e:
+        if _is_duplicate_error(e):
+            return False
+        raise
+
+
+def atualizar_um(tabela_ou_csv: str, filtro: Dict[str, Any], campos: Dict[str, Any]) -> None:
+    tabela = _tabela_from_nome_arquivo(tabela_ou_csv)
+    novos = {k: _normalize_txt(v) for k, v in campos.items()}
+    table_update(tabela, filtro, novos)
+
+
+def atualizar_por_filtro(tabela_ou_csv: str, novos_dados: dict, filtro: dict) -> None:
+    atualizar_um(tabela_ou_csv, filtro, novos_dados)
+
+
+def deletar_por_filtro(tabela_ou_csv: str, filtro: Dict[str, Any]) -> None:
+    tabela = _tabela_from_nome_arquivo(tabela_ou_csv)
+    table_delete(tabela, filtro)
