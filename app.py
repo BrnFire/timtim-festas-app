@@ -341,6 +341,161 @@ def pagina_relatorios():
 
     st.divider()
 
+    # =========================
+    # 🔄 Abas
+    # =========================
+    aba1, aba2 = st.tabs(["📊 Indicadores Financeiros", "🎠 Desempenho de Brinquedos"])
+
+    # ===== ABA 1 =====
+    with aba1:
+        st.subheader("📈 Lucro Bruto × Líquido × Meta")
+
+        anos_disp = sorted(df_fin_mensal["anomes"].str[:4].astype(int).unique())
+        ano_sel = st.selectbox("Selecione o ano:", anos_disp, index=len(anos_disp) - 1)
+
+        # ===== Carregar metas =====
+        df_meta = carregar_dados("metas", ["anomes", "meta"])
+        if df_meta.empty:
+            base = pd.date_range(start="2024-01-01", end="2026-12-01", freq="MS")
+            df_meta = pd.DataFrame({"anomes": base.strftime("%Y-%m"), "meta": [3000.0 for _ in base]})
+            salvar_dados(df_meta, "metas")
+
+        # Editor de metas
+        with st.expander("🎯 Editar metas mensais até dez/2026"):
+            for i, row in df_meta.iterrows():
+                try:
+                    mes_nome = pd.to_datetime(row["anomes"], format="%Y-%m").strftime("%B/%Y").capitalize()
+                except Exception:
+                    mes_nome = str(row["anomes"])
+                col1, col2 = st.columns([2, 1])
+                col1.write(f"Meta de **{mes_nome}**:")
+                try:
+                    meta_val = float(row["meta"]) if str(row["meta"]).strip() not in ["", "None", "nan"] else 0.0
+                except Exception:
+                    meta_val = 0.0
+                nova_meta = col2.number_input(
+                    f"Meta {row['anomes']}",
+                    min_value=0.0,
+                    value=meta_val,
+                    step=100.0,
+                    key=f"meta_{i}"
+                )
+                df_meta.at[i, "meta"] = nova_meta
+
+            if st.button("💾 Salvar metas"):
+                salvar_dados(df_meta, "metas")
+                st.success("✅ Metas atualizadas!")
+                st.rerun()
+
+        # ===== Preparar gráfico principal =====
+        df_fin_mensal["anomes"] = (
+            pd.to_datetime(df_fin_mensal["anomes"], errors="coerce").dt.strftime("%Y-%m")
+        )
+        df_meta["anomes"] = (
+            pd.to_datetime(df_meta["anomes"], errors="coerce").dt.strftime("%Y-%m")
+        )
+
+        df_meta["meta"] = pd.to_numeric(df_meta["meta"], errors="coerce").fillna(0.0)
+        df_plot = pd.merge(df_meta, df_fin_mensal, on="anomes", how="left").fillna(0.0)
+        df_plot["data_plot"] = pd.to_datetime(df_plot["anomes"], format="%Y-%m", errors="coerce")
+        df_plot = df_plot.sort_values("data_plot")
+
+        if not df_plot.empty:
+            fig, ax = plt.subplots(figsize=(9, 4))
+            ax.plot(df_plot["data_plot"], df_plot["liquido"], label="Lucro Líquido", marker="o")
+            ax.plot(df_plot["data_plot"], df_plot["bruto"], label="Lucro Bruto", marker="s")
+            ax.plot(df_plot["data_plot"], df_plot["meta"], label="Meta (até 12/2026)", linestyle="--", color="#FF9800")
+            ax.set_xlabel("Mês")
+            ax.set_ylabel("R$")
+            ax.grid(True, linestyle="--", alpha=0.6)
+            ax.legend()
+            ax.set_xticks(df_plot["data_plot"])
+            ax.set_xticklabels(df_plot["data_plot"].dt.strftime("%b/%y"), rotation=45)
+            ax.set_title(f"Lucro Bruto, Líquido e Metas até Dez/2026 (Ano atual: {ano_sel})")
+            st.pyplot(fig)
+
+        # ===== ROI corrigido =====
+        st.markdown("### 📊 ROI (%) por Mês")
+        if not df_plot.empty:
+            df_plot["roi"] = (df_plot["liquido"] / df_plot["bruto"].replace(0, pd.NA)) * 100
+            df_plot["roi"] = df_plot["roi"].replace([pd.NA, float("inf"), -float("inf")], 0).fillna(0)
+            if df_plot["roi"].abs().sum() > 0:
+                fig3, ax3 = plt.subplots(figsize=(9, 3))
+                ax3.plot(df_plot["data_plot"], df_plot["roi"], color="#7A5FFF", marker="o")
+                ax3.axhline(0, color="gray", linestyle="--", linewidth=0.8)
+                ax3.set_xlabel("Mês")
+                ax3.set_ylabel("ROI (%)")
+                ax3.set_xticks(df_plot["data_plot"])
+                ax3.set_xticklabels(df_plot["data_plot"].dt.strftime("%b/%y"), rotation=45)
+                ax3.set_title("Retorno sobre Investimento (ROI) Mensal")
+                ax3.grid(True, linestyle="--", alpha=0.6)
+                st.pyplot(fig3)
+            else:
+                st.info("Ainda não há dados suficientes para calcular ROI.")
+
+    # ===== ABA 2 =====
+    with aba2:
+        st.subheader("🎠 Desempenho de Brinquedos")
+
+        if reservas.empty:
+            st.info("Sem reservas registradas.")
+            return
+
+        # ===== Explode brinquedos item a item
+        linhas = []
+        for _, r in reservas.iterrows():
+            itens = [b.strip() for b in str(r["brinquedos"]).split(",") if b.strip()]
+            if not itens:
+                continue
+            bruto_res = (r["valor_total"] + r["valor_extra"] + r["frete"] - r["desconto"])
+            bruto_res = max(bruto_res, 0.0)
+            valor_item = bruto_res / len(itens)
+            for b in itens:
+                linhas.append({"Brinquedo": b, "Data": r["data"], "Valor_Item": valor_item})
+
+        itens_df = pd.DataFrame(linhas)
+        if itens_df.empty:
+            st.warning("Sem dados de brinquedos.")
+            return
+
+        # Corrigir categorias
+        if not brinquedos_df.empty and "nome" in brinquedos_df.columns:
+            brinquedos_df["categoria"] = brinquedos_df.get("categoria", "Tradicional").fillna("Tradicional")
+            itens_df = itens_df.merge(
+                brinquedos_df[["nome", "categoria"]],
+                left_on="Brinquedo", right_on="nome", how="left"
+            )
+            itens_df.drop(columns=["nome"], inplace=True, errors="ignore")
+        else:
+            itens_df["categoria"] = "Tradicional"
+
+        # Corrigir valores nulos
+        itens_df["Valor_Item"] = pd.to_numeric(itens_df["Valor_Item"], errors="coerce").fillna(0.0)
+
+        # ===== Rankings
+        rank_valor = (
+            itens_df.groupby("Brinquedo", as_index=False)
+                    .agg(Valor_Total=("Valor_Item", "sum"), Locações=("Valor_Item", "count"))
+                    .sort_values(["Valor_Total", "Locações"], ascending=[False, False])
+        )
+
+        st.markdown("### 💰 Top 15 Brinquedos por Valor")
+        fig2, ax2 = plt.subplots(figsize=(9, 4))
+        ax2.barh(rank_valor["Brinquedo"].head(15), rank_valor["Valor_Total"].head(15), color="#7A5FFF")
+        ax2.invert_yaxis()
+        ax2.set_xlabel("R$")
+        ax2.set_ylabel("Brinquedo")
+        ax2.grid(axis="x", linestyle="--", alpha=0.5)
+        st.pyplot(fig2)
+
+        st.markdown("### 🔢 Top 15 Brinquedos por Locações")
+        fig3, ax3 = plt.subplots(figsize=(9, 4))
+        ax3.barh(rank_valor["Brinquedo"].head(15), rank_valor["Locações"].head(15), color="#2ECC71")
+        ax3.invert_yaxis()
+        ax3.set_xlabel("Locações")
+        ax3.set_ylabel("Brinquedo")
+        ax3.grid(axis="x", linestyle="--", alpha=0.5)
+        st.pyplot(fig3)
 
 
 # ========================================
