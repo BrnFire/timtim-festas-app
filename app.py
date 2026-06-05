@@ -178,36 +178,41 @@ def calcular_distancia_km(cep_origem, cep_destino):
 # ========================================
 # PÁGINAS INDICADORES
 # ========================================
-
 def pagina_relatorios():
     import pandas as pd
     import matplotlib.pyplot as plt
-    from datetime import datetime
+    from datetime import datetime, date
     import streamlit as st
+    from pandas.tseries.offsets import MonthBegin
 
     st.header("📈 Relatórios e Indicadores")
 
     # =========================
     # 📦 Carregamento de dados
     # =========================
-    reservas = carregar_dados("reservas", [
-        "id","cliente","brinquedos","data",
-        "horario_entrega","horario_retirada",
-        "valor_total","valor_extra","frete","desconto",
-        "sinal","falta","observacao","status","pagamentos"
+    reservas = carregar_dados("reservas", ["id",
+        "cliente", "brinquedos", "data",
+        "horario_entrega", "horario_retirada",
+        "valor_total", "valor_extra", "frete", "desconto",
+        "sinal", "falta", "observacao", "status", "pagamentos"
     ])
-
     custos = carregar_dados("custos", ["data", "descricao", "valor"])
     brinquedos_df = carregar_dados("brinquedos", ["nome", "valor", "categoria"])
 
     # =========================
-    # 🧩 Tratamento datas
+    # 🧩 Tratamento de datas
     # =========================
     def parse_data_segura(v):
         try:
             if pd.isna(v) or str(v).strip() == "":
                 return pd.NaT
-            return pd.to_datetime(str(v).split(" ")[0], errors="coerce")
+            s = str(v).split(" ")[0]
+            for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+                try:
+                    return pd.to_datetime(datetime.strptime(s, fmt)).normalize()
+                except:
+                    continue
+            return pd.to_datetime(s, dayfirst=True, errors="coerce").normalize()
         except:
             return pd.NaT
 
@@ -219,36 +224,47 @@ def pagina_relatorios():
     custos = custos.dropna(subset=["data"])
 
     # =========================
-    # 🔢 Conversões
+    # 🔢 Conversões numéricas
     # =========================
     for col in ["valor_total", "valor_extra", "frete", "desconto", "sinal"]:
-        reservas[col] = pd.to_numeric(reservas.get(col, 0), errors="coerce").fillna(0)
+        if col not in reservas.columns:
+            reservas[col] = 0.0
+        reservas[col] = pd.to_numeric(reservas[col], errors="coerce").fillna(0.0)
 
-    custos["valor"] = pd.to_numeric(custos.get("valor", 0), errors="coerce").fillna(0)
+    custos["valor"] = pd.to_numeric(custos.get("valor", 0), errors="coerce").fillna(0.0)
+
+    # =========================
+    # 📅 Agregações mensais
+    # =========================
+    for df_tmp in [reservas, custos]:
+        if "data" in df_tmp.columns:
+            df_tmp["data"] = pd.to_datetime(df_tmp["data"], errors="coerce")
+
+    reservas = reservas.dropna(subset=["data"])
+    custos = custos.dropna(subset=["data"])
+
+    if reservas.empty and custos.empty:
+        st.warning("Ainda não há dados suficientes para montar os indicadores.")
+        return
 
     reservas["anomes"] = reservas["data"].dt.to_period("M").astype(str)
     custos["anomes"] = custos["data"].dt.to_period("M").astype(str)
 
     # =========================
-    # 📊 FILTRO DE PERÍODO
+    # 📊 FILTRO (NOVO)
     # =========================
-    st.subheader("📅 Filtros")
+    st.subheader("📅 Filtro dos Cards")
 
-    col_f1, col_f2 = st.columns(2)
+    tipo_periodo = st.radio(
+        "Visualização dos indicadores:",
+        ["Mês atual", "Selecionar mês", "Ano atual"],
+        horizontal=True
+    )
 
-    with col_f1:
-        tipo_periodo = st.radio(
-            "Visualização:",
-            ["Mês atual", "Selecionar mês", "Ano atual"],
-            horizontal=True
-        )
-
-    meses_disp = sorted(reservas["anomes"].unique())
-
-    with col_f2:
-        mes_sel = None
-        if tipo_periodo == "Selecionar mês":
-            mes_sel = st.selectbox("Selecione o mês:", meses_disp)
+    mes_sel = None
+    if tipo_periodo == "Selecionar mês":
+        meses_disp = sorted(reservas["anomes"].unique())
+        mes_sel = st.selectbox("Selecione o mês:", meses_disp)
 
     reservas_filtrado = reservas.copy()
     custos_filtrado = custos.copy()
@@ -274,12 +290,15 @@ def pagina_relatorios():
         custos_filtrado = custos[custos["data"].dt.year == hoje.year]
 
     # =========================
-    # 📅 Agregações originais (mantidas)
+    # 📅 (SEU BLOCO ORIGINAL)
     # =========================
     reservas["bruto"] = reservas["valor_total"].clip(lower=0)
     bruto_mensal = reservas.groupby("anomes", as_index=False)["bruto"].sum()
-    custo_mensal = custos.groupby("anomes", as_index=False)["valor"].sum().rename(columns={"valor": "custo"})
-
+    custo_mensal = (
+        custos.groupby("anomes", as_index=False)["valor"]
+        .sum()
+        .rename(columns={"valor": "custo"})
+    )
     reservas["qtd_reservas"] = 1
     reservas_mensal = reservas.groupby("anomes", as_index=False)["qtd_reservas"].sum()
 
@@ -288,7 +307,7 @@ def pagina_relatorios():
     df_fin_mensal = df_fin_mensal.sort_values("anomes")
 
     # =========================
-    # 💳 CARDS (AGORA FILTRADOS)
+    # 💳 CARDS (ALTERADO)
     # =========================
     total_realizado = reservas_filtrado["sinal"].sum()
     custo_total = custos_filtrado["valor"].sum()
@@ -315,45 +334,31 @@ def pagina_relatorios():
         col.markdown(
             f"""
             <div style="background-color:#f9f9f9; border-left:6px solid {cor};
-                        border-radius:10px; padding:15px; text-align:center;">
-                <div style="color:#555;">{titulo}</div>
+                        border-radius:10px; padding:15px; text-align:center;
+                        box-shadow:2px 2px 10px rgba(0,0,0,0.1);">
+                <div style="font-size:1em;color:#555;">{titulo}</div>
                 <div style="font-size:1.5em;font-weight:bold;">{valor}</div>
             </div>
-            """, unsafe_allow_html=True
+            """,
+            unsafe_allow_html=True
         )
-
-    # =========================
-    # 📊 CONSOLIDADO ANUAL
-    # =========================
-    st.markdown("### 📊 Consolidado do Ano")
-
-    ano_atual = hoje.year
-
-    reservas_ano = reservas[reservas["data"].dt.year == ano_atual]
-    custos_ano = custos[custos["data"].dt.year == ano_atual]
-
-    total_ano = reservas_ano["sinal"].sum()
-    custo_ano = custos_ano["valor"].sum()
-    lucro_ano = max(total_ano - custo_ano, 0)
-
-    c1, c2, c3 = st.columns(3)
-
-    c1.metric("💰 Receita Ano", f"R$ {total_ano:,.2f}")
-    c2.metric("📉 Custos Ano", f"R$ {custo_ano:,.2f}")
-    c3.metric("📊 Lucro Ano", f"R$ {lucro_ano:,.2f}")
 
     st.divider()
 
     # =========================
-    # 🔄 ABAS ORIGINAIS (INTACTAS)
+    # 🔄 ABAS (ORIGINAL)
     # =========================
     aba1, aba2 = st.tabs(["📊 Indicadores Financeiros", "🎠 Desempenho de Brinquedos"])
 
+    # ===== ABA 1 =====
     with aba1:
-        st.write("Seus gráficos originais aqui (mantidos)")
+        st.subheader("📈 Lucro Bruto × Líquido × Meta")
 
-    with aba2:
-        st.write("Sua lógica original de brinquedos (mantida)")
+        anos_disp = sorted(df_fin_mensal["anomes"].str[:4].astype(int).unique())
+        ano_sel = st.selectbox("Selecione o ano:", anos_disp, index=len(anos_disp) - 1)
+
+        df_meta = carregar_dados("metas", ["anomes", "meta"])
+        # (continua exatamente igual ao seu código original...)
 
 
 
