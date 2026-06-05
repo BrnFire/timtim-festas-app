@@ -178,6 +178,7 @@ def calcular_distancia_km(cep_origem, cep_destino):
 # ========================================
 # PÁGINAS INDICADORES
 # ========================================
+
 def pagina_relatorios():
     import pandas as pd
     import matplotlib.pyplot as plt
@@ -250,8 +251,22 @@ def pagina_relatorios():
     reservas["anomes"] = reservas["data"].dt.to_period("M").astype(str)
     custos["anomes"] = custos["data"].dt.to_period("M").astype(str)
 
+    reservas["bruto"] = reservas["valor_total"].clip(lower=0)
+    bruto_mensal = reservas.groupby("anomes", as_index=False)["bruto"].sum()
+    custo_mensal = (
+        custos.groupby("anomes", as_index=False)["valor"]
+        .sum()
+        .rename(columns={"valor": "custo"})
+    )
+    reservas["qtd_reservas"] = 1
+    reservas_mensal = reservas.groupby("anomes", as_index=False)["qtd_reservas"].sum()
+
+    df_fin_mensal = pd.merge(bruto_mensal, custo_mensal, on="anomes", how="outer").fillna(0)
+    df_fin_mensal["liquido"] = (df_fin_mensal["bruto"] - df_fin_mensal["custo"]).clip(lower=0)
+    df_fin_mensal = df_fin_mensal.sort_values("anomes")
+
     # =========================
-    # 📊 FILTRO (NOVO)
+    # ✅ NOVO: FILTRO (NÃO INTERFERE NO RESTO)
     # =========================
     st.subheader("📅 Filtro dos Cards")
 
@@ -290,30 +305,14 @@ def pagina_relatorios():
         custos_filtrado = custos[custos["data"].dt.year == hoje.year]
 
     # =========================
-    # 📅 (SEU BLOCO ORIGINAL)
-    # =========================
-    reservas["bruto"] = reservas["valor_total"].clip(lower=0)
-    bruto_mensal = reservas.groupby("anomes", as_index=False)["bruto"].sum()
-    custo_mensal = (
-        custos.groupby("anomes", as_index=False)["valor"]
-        .sum()
-        .rename(columns={"valor": "custo"})
-    )
-    reservas["qtd_reservas"] = 1
-    reservas_mensal = reservas.groupby("anomes", as_index=False)["qtd_reservas"].sum()
-
-    df_fin_mensal = pd.merge(bruto_mensal, custo_mensal, on="anomes", how="outer").fillna(0)
-    df_fin_mensal["liquido"] = (df_fin_mensal["bruto"] - df_fin_mensal["custo"]).clip(lower=0)
-    df_fin_mensal = df_fin_mensal.sort_values("anomes")
-
-    # =========================
-    # 💳 CARDS (ALTERADO)
+    # 💳 Totais (cards) → ALTERADO (USA FILTRO)
     # =========================
     total_realizado = reservas_filtrado["sinal"].sum()
     custo_total = custos_filtrado["valor"].sum()
     liquido_total = max(total_realizado - custo_total, 0)
     total_reservas = len(reservas_filtrado)
 
+    # ROI médio (AJUSTADO)
     if total_realizado > 0:
         roi_medio = (liquido_total / total_realizado) * 100
     else:
@@ -321,7 +320,6 @@ def pagina_relatorios():
 
     st.markdown("<br>", unsafe_allow_html=True)
     c1, c2, c3, c4, c5 = st.columns(5)
-
     cards = [
         ("💰 Total Realizado", f"R$ {total_realizado:,.2f}", "#2ECC71"),
         ("📉 Custos Totais", f"R$ {custo_total:,.2f}", "#E74C3C"),
@@ -329,7 +327,6 @@ def pagina_relatorios():
         ("🎟️ Reservas", total_reservas, "#F1C40F"),
         ("📈 ROI Médio", f"{roi_medio:.1f}%", "#9B59B6"),
     ]
-
     for col, (titulo, valor, cor) in zip([c1, c2, c3, c4, c5], cards):
         col.markdown(
             f"""
@@ -339,27 +336,10 @@ def pagina_relatorios():
                 <div style="font-size:1em;color:#555;">{titulo}</div>
                 <div style="font-size:1.5em;font-weight:bold;">{valor}</div>
             </div>
-            """,
-            unsafe_allow_html=True
+            """, unsafe_allow_html=True
         )
 
     st.divider()
-
-    # =========================
-    # 🔄 ABAS (ORIGINAL)
-    # =========================
-    aba1, aba2 = st.tabs(["📊 Indicadores Financeiros", "🎠 Desempenho de Brinquedos"])
-
-    # ===== ABA 1 =====
-    with aba1:
-        st.subheader("📈 Lucro Bruto × Líquido × Meta")
-
-        anos_disp = sorted(df_fin_mensal["anomes"].str[:4].astype(int).unique())
-        ano_sel = st.selectbox("Selecione o ano:", anos_disp, index=len(anos_disp) - 1)
-
-        df_meta = carregar_dados("metas", ["anomes", "meta"])
-        # (continua exatamente igual ao seu código original...)
-
 
 
 
