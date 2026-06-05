@@ -176,45 +176,38 @@ def calcular_distancia_km(cep_origem, cep_destino):
 
 
 # ========================================
-# PÁGINAS
+# PÁGINAS INDICADORES
 # ========================================
-
 
 def pagina_relatorios():
     import pandas as pd
     import matplotlib.pyplot as plt
-    from datetime import datetime, date
+    from datetime import datetime
     import streamlit as st
-    from pandas.tseries.offsets import MonthBegin
 
     st.header("📈 Relatórios e Indicadores")
 
     # =========================
     # 📦 Carregamento de dados
     # =========================
-    reservas = carregar_dados("reservas", ["id",
-        "cliente", "brinquedos", "data",
-        "horario_entrega", "horario_retirada",
-        "valor_total", "valor_extra", "frete", "desconto",
-        "sinal", "falta", "observacao", "status", "pagamentos"
+    reservas = carregar_dados("reservas", [
+        "id","cliente","brinquedos","data",
+        "horario_entrega","horario_retirada",
+        "valor_total","valor_extra","frete","desconto",
+        "sinal","falta","observacao","status","pagamentos"
     ])
+
     custos = carregar_dados("custos", ["data", "descricao", "valor"])
     brinquedos_df = carregar_dados("brinquedos", ["nome", "valor", "categoria"])
 
     # =========================
-    # 🧩 Tratamento de datas
+    # 🧩 Datas
     # =========================
     def parse_data_segura(v):
         try:
             if pd.isna(v) or str(v).strip() == "":
                 return pd.NaT
-            s = str(v).split(" ")[0]
-            for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
-                try:
-                    return pd.to_datetime(datetime.strptime(s, fmt)).normalize()
-                except:
-                    continue
-            return pd.to_datetime(s, dayfirst=True, errors="coerce").normalize()
+            return pd.to_datetime(str(v).split(" ")[0], errors="coerce")
         except:
             return pd.NaT
 
@@ -226,245 +219,161 @@ def pagina_relatorios():
     custos = custos.dropna(subset=["data"])
 
     # =========================
-    # 🔢 Conversões numéricas
+    # 🔢 Numéricos
     # =========================
     for col in ["valor_total", "valor_extra", "frete", "desconto", "sinal"]:
-        if col not in reservas.columns:
-            reservas[col] = 0.0
-        reservas[col] = pd.to_numeric(reservas[col], errors="coerce").fillna(0.0)
+        reservas[col] = pd.to_numeric(reservas.get(col, 0), errors="coerce").fillna(0)
 
-    custos["valor"] = pd.to_numeric(custos.get("valor", 0), errors="coerce").fillna(0.0)
+    custos["valor"] = pd.to_numeric(custos.get("valor", 0), errors="coerce").fillna(0)
 
     # =========================
-    # 📅 Agregações mensais
+    # 📅 Agrupamentos
     # =========================
-    # Garante que as colunas "data" sejam realmente datetimes
-    for df_tmp in [reservas, custos]:
-        if "data" in df_tmp.columns:
-            df_tmp["data"] = pd.to_datetime(df_tmp["data"], errors="coerce")
-
-    # Remove linhas sem data válida
-    reservas = reservas.dropna(subset=["data"])
-    custos = custos.dropna(subset=["data"])
-
-    # Se não tiver nenhum dado válido, evita quebrar a página
-    if reservas.empty and custos.empty:
-        st.warning("Ainda não há dados suficientes para montar os indicadores.")
-        return
-
     reservas["anomes"] = reservas["data"].dt.to_period("M").astype(str)
     custos["anomes"] = custos["data"].dt.to_period("M").astype(str)
 
-    reservas["bruto"] = reservas["valor_total"].clip(lower=0)
-    bruto_mensal = reservas.groupby("anomes", as_index=False)["bruto"].sum()
-    custo_mensal = (
-        custos.groupby("anomes", as_index=False)["valor"]
-        .sum()
-        .rename(columns={"valor": "custo"})
-    )
-    reservas["qtd_reservas"] = 1
-    reservas_mensal = reservas.groupby("anomes", as_index=False)["qtd_reservas"].sum()
+    # =========================
+    # 📊 FILTRO
+    # =========================
+    st.subheader("📅 Filtros")
 
+    col1, col2 = st.columns(2)
 
-    df_fin_mensal = pd.merge(bruto_mensal, custo_mensal, on="anomes", how="outer").fillna(0)
-    df_fin_mensal["liquido"] = (df_fin_mensal["bruto"] - df_fin_mensal["custo"]).clip(lower=0)
-    df_fin_mensal = df_fin_mensal.sort_values("anomes")
+    with col1:
+        tipo_periodo = st.radio(
+            "Visualização:",
+            ["Mês atual", "Selecionar mês", "Ano atual"],
+            horizontal=True
+        )
+
+    meses_disp = sorted(reservas["anomes"].unique())
+
+    with col2:
+        mes_sel = None
+        if tipo_periodo == "Selecionar mês":
+            mes_sel = st.selectbox("Selecione o mês:", meses_disp)
+
+    reservas_filtrado = reservas.copy()
+    custos_filtrado = custos.copy()
+
+    hoje = pd.Timestamp.now()
+
+    if tipo_periodo == "Mês atual":
+        reservas_filtrado = reservas[
+            (reservas["data"].dt.month == hoje.month) &
+            (reservas["data"].dt.year == hoje.year)
+        ]
+        custos_filtrado = custos[
+            (custos["data"].dt.month == hoje.month) &
+            (custos["data"].dt.year == hoje.year)
+        ]
+
+    elif tipo_periodo == "Selecionar mês" and mes_sel:
+        reservas_filtrado = reservas[reservas["anomes"] == mes_sel]
+        custos_filtrado = custos[custos["anomes"] == mes_sel]
+
+    elif tipo_periodo == "Ano atual":
+        reservas_filtrado = reservas[reservas["data"].dt.year == hoje.year]
+        custos_filtrado = custos[custos["data"].dt.year == hoje.year]
 
     # =========================
-    # 💳 Totais (cards)
+    # 💳 CARDS (FILTRADOS)
     # =========================
-    total_realizado = reservas["sinal"].sum()
-    custo_total = custos["valor"].sum()
-    liquido_total = df_fin_mensal["liquido"].sum()
-    total_reservas = len(reservas)
+    total_realizado = reservas_filtrado["sinal"].sum()
+    custo_total = custos_filtrado["valor"].sum()
+    liquido_total = max(total_realizado - custo_total, 0)
+    total_reservas = len(reservas_filtrado)
 
-    # ROI médio
-    df_tmp = df_fin_mensal.copy()
-    df_tmp["roi"] = (df_tmp["liquido"] / df_tmp["bruto"].replace(0, pd.NA)) * 100
-    df_tmp["roi"] = pd.to_numeric(df_tmp["roi"], errors="coerce").fillna(0.0)
-    roi_medio = df_tmp["roi"].mean()
+    roi_medio = (liquido_total / total_realizado * 100) if total_realizado > 0 else 0
 
     st.markdown("<br>", unsafe_allow_html=True)
     c1, c2, c3, c4, c5 = st.columns(5)
+
     cards = [
         ("💰 Total Realizado", f"R$ {total_realizado:,.2f}", "#2ECC71"),
-        ("📉 Custos Totais", f"R$ {custo_total:,.2f}", "#E74C3C"),
-        ("📊 Lucro Bruto", f"R$ {liquido_total:,.2f}", "#0078D7"),
+        ("📉 Custos", f"R$ {custo_total:,.2f}", "#E74C3C"),
+        ("📊 Lucro", f"R$ {liquido_total:,.2f}", "#0078D7"),
         ("🎟️ Reservas", total_reservas, "#F1C40F"),
-        ("📈 ROI Médio", f"{roi_medio:.1f}%", "#9B59B6"),
+        ("📈 ROI", f"{roi_medio:.1f}%", "#9B59B6"),
     ]
+
     for col, (titulo, valor, cor) in zip([c1, c2, c3, c4, c5], cards):
         col.markdown(
             f"""
-            <div style="background-color:#f9f9f9; border-left:6px solid {cor};
-                        border-radius:10px; padding:15px; text-align:center;
-                        box-shadow:2px 2px 10px rgba(0,0,0,0.1);">
-                <div style="font-size:1em;color:#555;">{titulo}</div>
-                <div style="font-size:1.5em;font-weight:bold;">{valor}</div>
+            <div style="background:#f9f9f9;border-left:6px solid {cor};
+                        border-radius:10px;padding:15px;text-align:center;">
+                <div style="color:#555;">{titulo}</div>
+                <div style="font-size:20px;font-weight:bold;">{valor}</div>
             </div>
-            """, unsafe_allow_html=True
+            """,
+            unsafe_allow_html=True
         )
+
+    # =========================
+    # 📊 CONSOLIDADO ANUAL
+    # =========================
+    st.markdown("### 📊 Consolidado do Ano")
+
+    reservas_ano = reservas[reservas["data"].dt.year == hoje.year]
+    custos_ano = custos[custos["data"].dt.year == hoje.year]
+
+    total_ano = reservas_ano["sinal"].sum()
+    custo_ano = custos_ano["valor"].sum()
+    lucro_ano = max(total_ano - custo_ano, 0)
+
+    c1, c2, c3 = st.columns(3)
+
+    c1.metric("💰 Receita Ano", f"R$ {total_ano:,.2f}")
+    c2.metric("📉 Custos Ano", f"R$ {custo_ano:,.2f}")
+    c3.metric("📊 Lucro Ano", f"R$ {lucro_ano:,.2f}")
 
     st.divider()
 
     # =========================
-    # 🔄 Abas
+    # 🔄 ABAS
     # =========================
-    aba1, aba2 = st.tabs(["📊 Indicadores Financeiros", "🎠 Desempenho de Brinquedos"])
+    aba1, aba2 = st.tabs(["📊 Financeiro", "🎠 Brinquedos"])
 
-    # ===== ABA 1 =====
+    # =========================
+    # ABA 1 (GRÁFICO)
+    # =========================
     with aba1:
-        st.subheader("📈 Lucro Bruto × Líquido × Meta")
+        df_fin = reservas.groupby("anomes")["sinal"].sum().reset_index()
+        df_fin["data_plot"] = pd.to_datetime(df_fin["anomes"])
 
-        anos_disp = sorted(df_fin_mensal["anomes"].str[:4].astype(int).unique())
-        ano_sel = st.selectbox("Selecione o ano:", anos_disp, index=len(anos_disp) - 1)
+        fig, ax = plt.subplots()
+        ax.plot(df_fin["data_plot"], df_fin["sinal"], marker="o")
+        ax.set_title("Faturamento ao longo do tempo")
+        ax.grid(True)
 
-        # ===== Carregar metas =====
-        df_meta = carregar_dados("metas", ["anomes", "meta"])
-        if df_meta.empty:
-            base = pd.date_range(start="2024-01-01", end="2026-12-01", freq="MS")
-            df_meta = pd.DataFrame({"anomes": base.strftime("%Y-%m"), "meta": [3000.0 for _ in base]})
-            salvar_dados(df_meta, "metas")
+        st.pyplot(fig)
 
-        # Editor de metas
-        with st.expander("🎯 Editar metas mensais até dez/2026"):
-            for i, row in df_meta.iterrows():
-                try:
-                    mes_nome = pd.to_datetime(row["anomes"], format="%Y-%m").strftime("%B/%Y").capitalize()
-                except Exception:
-                    mes_nome = str(row["anomes"])
-                col1, col2 = st.columns([2, 1])
-                col1.write(f"Meta de **{mes_nome}**:")
-                try:
-                    meta_val = float(row["meta"]) if str(row["meta"]).strip() not in ["", "None", "nan"] else 0.0
-                except Exception:
-                    meta_val = 0.0
-                nova_meta = col2.number_input(
-                    f"Meta {row['anomes']}",
-                    min_value=0.0,
-                    value=meta_val,
-                    step=100.0,
-                    key=f"meta_{i}"
-                )
-                df_meta.at[i, "meta"] = nova_meta
-
-            if st.button("💾 Salvar metas"):
-                salvar_dados(df_meta, "metas")
-                st.success("✅ Metas atualizadas!")
-                st.rerun()
-
-        # ===== Preparar gráfico principal =====
-        df_fin_mensal["anomes"] = (
-            pd.to_datetime(df_fin_mensal["anomes"], errors="coerce").dt.strftime("%Y-%m")
-        )
-        df_meta["anomes"] = (
-            pd.to_datetime(df_meta["anomes"], errors="coerce").dt.strftime("%Y-%m")
-        )
-
-        df_meta["meta"] = pd.to_numeric(df_meta["meta"], errors="coerce").fillna(0.0)
-        df_plot = pd.merge(df_meta, df_fin_mensal, on="anomes", how="left").fillna(0.0)
-        df_plot["data_plot"] = pd.to_datetime(df_plot["anomes"], format="%Y-%m", errors="coerce")
-        df_plot = df_plot.sort_values("data_plot")
-
-        if not df_plot.empty:
-            fig, ax = plt.subplots(figsize=(9, 4))
-            ax.plot(df_plot["data_plot"], df_plot["liquido"], label="Lucro Líquido", marker="o")
-            ax.plot(df_plot["data_plot"], df_plot["bruto"], label="Lucro Bruto", marker="s")
-            ax.plot(df_plot["data_plot"], df_plot["meta"], label="Meta (até 12/2026)", linestyle="--", color="#FF9800")
-            ax.set_xlabel("Mês")
-            ax.set_ylabel("R$")
-            ax.grid(True, linestyle="--", alpha=0.6)
-            ax.legend()
-            ax.set_xticks(df_plot["data_plot"])
-            ax.set_xticklabels(df_plot["data_plot"].dt.strftime("%b/%y"), rotation=45)
-            ax.set_title(f"Lucro Bruto, Líquido e Metas até Dez/2026 (Ano atual: {ano_sel})")
-            st.pyplot(fig)
-
-        # ===== ROI corrigido =====
-        st.markdown("### 📊 ROI (%) por Mês")
-        if not df_plot.empty:
-            df_plot["roi"] = (df_plot["liquido"] / df_plot["bruto"].replace(0, pd.NA)) * 100
-            df_plot["roi"] = df_plot["roi"].replace([pd.NA, float("inf"), -float("inf")], 0).fillna(0)
-            if df_plot["roi"].abs().sum() > 0:
-                fig3, ax3 = plt.subplots(figsize=(9, 3))
-                ax3.plot(df_plot["data_plot"], df_plot["roi"], color="#7A5FFF", marker="o")
-                ax3.axhline(0, color="gray", linestyle="--", linewidth=0.8)
-                ax3.set_xlabel("Mês")
-                ax3.set_ylabel("ROI (%)")
-                ax3.set_xticks(df_plot["data_plot"])
-                ax3.set_xticklabels(df_plot["data_plot"].dt.strftime("%b/%y"), rotation=45)
-                ax3.set_title("Retorno sobre Investimento (ROI) Mensal")
-                ax3.grid(True, linestyle="--", alpha=0.6)
-                st.pyplot(fig3)
-            else:
-                st.info("Ainda não há dados suficientes para calcular ROI.")
-
-    # ===== ABA 2 =====
+    # =========================
+    # ABA 2 (BRINQUEDOS)
+    # =========================
     with aba2:
-        st.subheader("🎠 Desempenho de Brinquedos")
-
         if reservas.empty:
-            st.info("Sem reservas registradas.")
+            st.info("Sem dados")
             return
 
-        # ===== Explode brinquedos item a item
         linhas = []
         for _, r in reservas.iterrows():
-            itens = [b.strip() for b in str(r["brinquedos"]).split(",") if b.strip()]
-            if not itens:
-                continue
-            bruto_res = (r["valor_total"] + r["valor_extra"] + r["frete"] - r["desconto"])
-            bruto_res = max(bruto_res, 0.0)
-            valor_item = bruto_res / len(itens)
+            itens = str(r["brinquedos"]).split(",")
             for b in itens:
-                linhas.append({"Brinquedo": b, "Data": r["data"], "Valor_Item": valor_item})
+                linhas.append({"Brinquedo": b.strip(), "Valor": r["valor_total"]})
 
-        itens_df = pd.DataFrame(linhas)
-        if itens_df.empty:
-            st.warning("Sem dados de brinquedos.")
-            return
+        df = pd.DataFrame(linhas)
 
-        # Corrigir categorias
-        if not brinquedos_df.empty and "nome" in brinquedos_df.columns:
-            brinquedos_df["categoria"] = brinquedos_df.get("categoria", "Tradicional").fillna("Tradicional")
-            itens_df = itens_df.merge(
-                brinquedos_df[["nome", "categoria"]],
-                left_on="Brinquedo", right_on="nome", how="left"
-            )
-            itens_df.drop(columns=["nome"], inplace=True, errors="ignore")
-        else:
-            itens_df["categoria"] = "Tradicional"
+        rank = df.groupby("Brinquedo")["Valor"].sum().sort_values(ascending=False).head(10)
 
-        # Corrigir valores nulos
-        itens_df["Valor_Item"] = pd.to_numeric(itens_df["Valor_Item"], errors="coerce").fillna(0.0)
-
-        # ===== Rankings
-        rank_valor = (
-            itens_df.groupby("Brinquedo", as_index=False)
-                    .agg(Valor_Total=("Valor_Item", "sum"), Locações=("Valor_Item", "count"))
-                    .sort_values(["Valor_Total", "Locações"], ascending=[False, False])
-        )
-
-        st.markdown("### 💰 Top 15 Brinquedos por Valor")
-        fig2, ax2 = plt.subplots(figsize=(9, 4))
-        ax2.barh(rank_valor["Brinquedo"].head(15), rank_valor["Valor_Total"].head(15), color="#7A5FFF")
-        ax2.invert_yaxis()
-        ax2.set_xlabel("R$")
-        ax2.set_ylabel("Brinquedo")
-        ax2.grid(axis="x", linestyle="--", alpha=0.5)
-        st.pyplot(fig2)
-
-        st.markdown("### 🔢 Top 15 Brinquedos por Locações")
-        fig3, ax3 = plt.subplots(figsize=(9, 4))
-        ax3.barh(rank_valor["Brinquedo"].head(15), rank_valor["Locações"].head(15), color="#2ECC71")
-        ax3.invert_yaxis()
-        ax3.set_xlabel("Locações")
-        ax3.set_ylabel("Brinquedo")
-        ax3.grid(axis="x", linestyle="--", alpha=0.5)
-        st.pyplot(fig3)
+        st.bar_chart(rank)
 
 
 
+
+# ========================================
+# PÁGINAS BRINQUEDOS
+# ========================================
 def pagina_brinquedos():
     import streamlit as st
     import pandas as pd
