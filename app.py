@@ -3845,7 +3845,7 @@ def pagina_funcionarios():
 from docx import Document
 from datetime import datetime
 
-def gerar_contrato(dados):
+def gerar_contrato():
     doc = Document("modelos/contrato_modelo.docx")
 
     def substituir_texto(paragraphs, chave, valor):
