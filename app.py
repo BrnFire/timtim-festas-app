@@ -3842,127 +3842,40 @@ def pagina_funcionarios():
 # =========================================
 # MÓDULO: CONTRATOS
 # =========================================
-
-import os
 from docx import Document
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
-import streamlit as st
-import pandas as pd
-from banco import carregar_dados
+from datetime import datetime
 
+def gerar_contrato(dados):
+    doc = Document("modelos/contrato_modelo.docx")
 
-def gerar_pdf(texto, caminho_pdf):
-    c = canvas.Canvas(caminho_pdf, pagesize=A4)
-    largura, altura = A4
+    def substituir_texto(paragraphs, chave, valor):
+        for p in paragraphs:
+            if chave in p.text:
+                for run in p.runs:
+                    run.text = run.text.replace(chave, str(valor))
 
-    y = altura - 40
-    for linha in texto.split("\n"):
-        c.drawString(40, y, linha)
-        y -= 14
-        if y < 40:
-            c.showPage()
-            y = altura - 40
+    for p in doc.paragraphs:
+        substituir_texto([p], "{{cliente_nome}}", dados["cliente"])
+        substituir_texto([p], "{{cliente_telefone}}", dados["telefone"])
+        substituir_texto([p], "{{cliente_cpf}}", dados["cpf"])
+        substituir_texto([p], "{{cliente_email}}", dados["email"])
+        substituir_texto([p], "{{cliente_rg}}", dados["rg"])
 
-    c.save()
+        substituir_texto([p], "{{data_evento}}", dados["data"])
+        substituir_texto([p], "{{hora_entrega}}", dados["hora_entrega"])
+        substituir_texto([p], "{{hora_retirada}}", dados["hora_retirada"])
+        substituir_texto([p], "{{endereco}}", dados["endereco"])
 
+        substituir_texto([p], "{{lista_brinquedos}}", dados["brinquedos"])
 
-def pagina_contratos():
-    st.header("📄 Gerar Contrato")
+        substituir_texto([p], "{{valor_total}}", dados["valor_total"])
+        substituir_texto([p], "{{valor_entrada}}", dados["entrada"])
+        substituir_texto([p], "{{valor_restante}}", dados["restante"])
 
-    # ===============================
-    # CARREGAR DADOS
-    # ===============================
-    clientes = carregar_dados(
-        "clientes",
-        ["nome", "telefone", "email"]
-    )
+    nome_arquivo = f"contrato_{dados['cliente']}.docx"
+    doc.save(nome_arquivo)
 
-    reservas = carregar_dados(
-        "reservas",
-        ["id", "cliente", "brinquedos", "data", "valor_total", "sinal", "falta"]
-    )
-
-    if clientes.empty or reservas.empty:
-        st.warning("⚠️ Cadastre clientes e reservas antes de gerar contratos.")
-        return
-
-    # ===============================
-    # SELEÇÃO
-    # ===============================
-    cliente_nome = st.selectbox(
-        "Cliente",
-        sorted(clientes["nome"].dropna().unique())
-    )
-
-    reservas_cliente = reservas[reservas["cliente"] == cliente_nome]
-
-    if reservas_cliente.empty:
-        st.info("Este cliente não possui reservas.")
-        return
-
-    reserva_id = st.selectbox(
-        "Reserva",
-        reservas_cliente["id"].astype(str).tolist()
-    )
-
-    reserva = reservas_cliente[reservas_cliente["id"].astype(str) == reserva_id].iloc[0]
-    cliente = clientes[clientes["nome"] == cliente_nome].iloc[0]
-
-    # ===============================
-    # DADOS FORMATADOS
-    # ===============================
-    brinquedos_txt = f"Brinquedos Locados: {reserva['brinquedos']}"
-    data_evento = pd.to_datetime(reserva["data"]).strftime("%d/%m/%Y")
-
-    mapa = {
-        "{{CLIENTE}}": cliente_nome,
-        "{{TELEFONE}}": cliente.get("telefone", ""),
-        "{{DATA_EVENTO}}": data_evento,
-        "{{BRINQUEDOS}}": brinquedos_txt,
-        "{{VALOR_TOTAL}}": f"{float(reserva['valor_total']):,.2f}",
-        "{{SINAL}}": f"{float(reserva['sinal']):,.2f}",
-        "{{FALTA}}": f"{float(reserva['falta']):,.2f}",
-    }
-
-    # ===============================
-    # GERAR CONTRATO
-    # ===============================
-    if st.button("📄 Gerar Contrato"):
-        modelo_path = "modelo.docx"
-        doc = Document(modelo_path)
-
-        texto_completo = []
-
-        for p in doc.paragraphs:
-            for chave, valor in mapa.items():
-                if chave in p.text:
-                    p.text = p.text.replace(chave, valor)
-            texto_completo.append(p.text)
-
-        nome_base = f"Contrato_{cliente_nome.replace(' ', '_')}_{data_evento}"
-
-        docx_path = f"/tmp/{nome_base}.docx"
-        pdf_path = f"/tmp/{nome_base}.pdf"
-
-        doc.save(docx_path)
-        gerar_pdf("\n".join(texto_completo), pdf_path)
-
-        st.success("✅ Contrato gerado com sucesso!")
-
-        with open(docx_path, "rb") as f:
-            st.download_button(
-                "⬇️ Baixar contrato (Word)",
-                f,
-                file_name=f"{nome_base}.docx"
-            )
-
-        with open(pdf_path, "rb") as f:
-            st.download_button(
-                "⬇️ Baixar contrato (PDF)",
-                f,
-                file_name=f"{nome_base}.pdf"
-            )
+    return nome_arquivo
 
 # ========================================
 # PAGINA CONTRATO FIM
