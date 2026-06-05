@@ -4130,7 +4130,7 @@ else:
     elif menu == "Pré-Reservas":
         pagina_pre_reservas()
     elif menu == "Gerar Contratos":
-        gerar_contrato() 
+        pagina_contratos() 
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
