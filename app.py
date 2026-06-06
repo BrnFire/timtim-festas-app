@@ -3848,6 +3848,8 @@ def pagina_contratos():
     from docx import Document
     import os
     import pandas as pd
+    from datetime import datetime
+    import subprocess
 
     st.title("📄 Gerar Contratos")
 
@@ -3881,22 +3883,19 @@ def pagina_contratos():
     # =========================
     reservas["label"] = reservas["cliente"] + " - " + reservas["data"].astype(str)
 
-    reserva_sel = st.selectbox(
-        "Selecione a reserva:",
-        reservas["label"]
-    )
-
+    reserva_sel = st.selectbox("Selecione a reserva:", reservas["label"])
     reserva = reservas[reservas["label"] == reserva_sel].iloc[0]
 
     # =========================
     # 🔎 BUSCAR CLIENTE
     # =========================
     cliente_df = clientes[
-        clientes["nome"].str.strip().str.lower() == str(reserva["cliente"]).strip().lower()
+        clientes["nome"].str.strip().str.lower() ==
+        str(reserva["cliente"]).strip().lower()
     ]
 
     if cliente_df.empty:
-        st.warning("⚠️ Cliente não encontrado na base")
+        st.warning("⚠️ Cliente não encontrado")
         cliente = {}
     else:
         cliente = cliente_df.iloc[0].to_dict()
@@ -3904,17 +3903,11 @@ def pagina_contratos():
     # =========================
     # 🏠 MONTAR ENDEREÇO
     # =========================
-    logradouro = cliente.get("logradouro", "")
-    numero = cliente.get("numero", "")
-    complemento = cliente.get("complemento", "")
-    cidade = cliente.get("cidade", "")
-    cep = cliente.get("cep", "")
-
     endereco_completo = " - ".join(filter(None, [
-        f"{logradouro}, {numero}" if logradouro else "",
-        complemento,
-        cidade,
-        f"CEP: {cep}" if cep else ""
+        f"{cliente.get('logradouro','')}, {cliente.get('numero','')}" if cliente.get("logradouro") else "",
+        cliente.get("complemento", ""),
+        cliente.get("cidade", ""),
+        f"CEP: {cliente.get('cep','')}" if cliente.get("cep") else ""
     ]))
 
     # =========================
@@ -3923,7 +3916,6 @@ def pagina_contratos():
     st.divider()
 
     st.subheader("📋 Dados encontrados")
-
     st.write("👤 Cliente:", reserva["cliente"])
     st.write("📅 Data:", reserva["data"])
     st.write("🎠 Brinquedos:", reserva["brinquedos"])
@@ -3948,13 +3940,21 @@ def pagina_contratos():
     # =========================
     # 📄 GERAR CONTRATO
     # =========================
-    if st.button("📄 Gerar contrato automático"):
+    if st.button("📄 Gerar contrato"):
 
         try:
             doc = Document(caminho_modelo)
 
             # =========================
-            # 💰 CÁLCULOS
+            # 🗓️ DATA ATUAL
+            # =========================
+            data_atual = datetime.now()
+            dia = data_atual.strftime("%d")
+            mes = data_atual.strftime("%B").capitalize()
+            ano = data_atual.strftime("%Y")
+
+            # =========================
+            # 💰 VALORES
             # =========================
             valor_total = reserva["valor_total"]
             entrada = reserva["sinal"]
@@ -3984,6 +3984,13 @@ def pagina_contratos():
             substituir_tudo(doc, "{{lista_brinquedos}}", reserva["brinquedos"])
 
             # =========================
+            # 🔁 DATA CONTRATO
+            # =========================
+            substituir_tudo(doc, "{{dia}}", dia)
+            substituir_tudo(doc, "{{mes}}", mes)
+            substituir_tudo(doc, "{{ano}}", ano)
+
+            # =========================
             # 🔁 VALORES
             # =========================
             substituir_tudo(doc, "{{valor_total}}", f"{valor_total:,.2f}")
@@ -3991,19 +3998,42 @@ def pagina_contratos():
             substituir_tudo(doc, "{{valor_restante}}", f"{restante:,.2f}")
 
             # =========================
-            # 💾 SALVAR
+            # 💾 SALVAR DOCX
             # =========================
-            nome_arquivo = f"contrato_{reserva['cliente'].replace(' ', '_')}.docx"
-            doc.save(nome_arquivo)
+            nome_docx = f"contrato_{reserva['cliente'].replace(' ', '_')}.docx"
+            doc.save(nome_docx)
 
-            st.success("✅ Contrato gerado com dados completos!")
+            st.success("✅ Contrato Word gerado!")
 
-            with open(nome_arquivo, "rb") as f:
-                st.download_button(
-                    "⬇️ Baixar contrato",
-                    f,
-                    file_name=nome_arquivo
-                )
+            with open(nome_docx, "rb") as f:
+                st.download_button("⬇️ Baixar Word", f, file_name=nome_docx)
+
+            # =========================
+            # 📄 BOTÃO GERAR PDF
+            # =========================
+            def converter_para_pdf(nome_docx):
+                try:
+                    subprocess.run([
+                        "libreoffice",
+                        "--headless",
+                        "--convert-to",
+                        "pdf",
+                        nome_docx
+                    ])
+                    return nome_docx.replace(".docx", ".pdf")
+                except:
+                    return None
+
+            if st.button("📄 Gerar PDF"):
+
+                pdf = converter_para_pdf(nome_docx)
+
+                if pdf and os.path.exists(pdf):
+                    with open(pdf, "rb") as f:
+                        st.download_button("⬇️ Baixar PDF", f, file_name=pdf)
+                    st.success("✅ PDF gerado com sucesso!")
+                else:
+                    st.warning("⚠️ Não foi possível gerar o PDF no servidor")
 
         except Exception as e:
             st.error(f"❌ Erro: {e}")
