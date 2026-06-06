@@ -3851,15 +3851,15 @@ def pagina_contratos():
     st.title("📄 Gerar Contratos")
 
     # =========================
-    # ✅ VERIFICAR MODELO
+    # 📂 CAMINHO DO MODELO
     # =========================
     caminho_modelo = "modelos/contrato_modelo.docx"
 
     if not os.path.exists(caminho_modelo):
-        st.error("❌ Arquivo modelo não encontrado em /modelos")
+        st.error("❌ Modelo Word não encontrado na pasta /modelos")
         return
 
-    st.success("✅ Modelo carregado com sucesso")
+    st.success("✅ Modelo carregado")
 
     # =========================
     # 🧾 FORMULÁRIO
@@ -3869,7 +3869,7 @@ def pagina_contratos():
     col1, col2 = st.columns(2)
 
     with col1:
-        cliente = st.text_input("Nome do cliente")
+        cliente = st.text_input("Nome")
         cpf = st.text_input("CPF")
         rg = st.text_input("RG")
 
@@ -3877,21 +3877,20 @@ def pagina_contratos():
         telefone = st.text_input("Telefone")
         email = st.text_input("Email")
 
-    st.subheader("📅 Dados do Evento")
+    st.subheader("📅 Evento")
 
     col3, col4 = st.columns(2)
 
     with col3:
-        data_evento = st.date_input("Data do evento")
-        hora_entrega = st.text_input("Hora entrega (ex: 10:30)")
+        data_evento = st.date_input("Data")
+        hora_entrega = st.text_input("Hora entrega")
 
     with col4:
-        hora_retirada = st.text_input("Hora retirada (ex: 17:30)")
-        endereco = st.text_input("Endereço completo")
+        hora_retirada = st.text_input("Hora retirada")
+        endereco = st.text_input("Endereço")
 
     st.subheader("🎠 Brinquedos")
-
-    brinquedos = st.text_area("Lista de brinquedos (separados por vírgula)")
+    brinquedos = st.text_area("Lista de brinquedos")
 
     st.subheader("💰 Valores")
 
@@ -3901,10 +3900,29 @@ def pagina_contratos():
         valor_total = st.number_input("Valor total", value=0.0)
 
     with col6:
-        entrada = st.number_input("Entrada paga", value=0.0)
+        entrada = st.number_input("Entrada", value=0.0)
 
     with col7:
         restante = st.number_input("Restante", value=0.0)
+
+    # =========================
+    # 🔧 FUNÇÃO CORRIGIDA
+    # =========================
+    def substituir_tudo(doc, chave, valor):
+
+        valor = str(valor)
+
+        # Parágrafos
+        for p in doc.paragraphs:
+            if chave in p.text:
+                p.text = p.text.replace(chave, valor)
+
+        # Tabelas
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    if chave in cell.text:
+                        cell.text = cell.text.replace(chave, valor)
 
     # =========================
     # 📄 GERAR CONTRATO
@@ -3914,49 +3932,36 @@ def pagina_contratos():
         try:
             doc = Document(caminho_modelo)
 
-            def substituir(chave, valor):
-                for p in doc.paragraphs:
-                    if chave in p.text:
-                        for run in p.runs:
-                            run.text = run.text.replace(chave, str(valor))
+            # 🔁 Substituições
+            substituir_tudo(doc, "{{cliente_nome}}", cliente)
+            substituir_tudo(doc, "{{cliente_cpf}}", cpf)
+            substituir_tudo(doc, "{{cliente_rg}}", rg)
+            substituir_tudo(doc, "{{cliente_email}}", email)
+            substituir_tudo(doc, "{{cliente_telefone}}", telefone)
 
-            # =========================
-            # 🔁 SUBSTITUIÇÕES
-            # =========================
-            substituir("{{cliente_nome}}", cliente)
-            substituir("{{cliente_cpf}}", cpf)
-            substituir("{{cliente_rg}}", rg)
-            substituir("{{cliente_telefone}}", telefone)
-            substituir("{{cliente_email}}", email)
+            substituir_tudo(doc, "{{data_evento}}", data_evento.strftime("%d/%m/%Y"))
+            substituir_tudo(doc, "{{hora_entrega}}", hora_entrega)
+            substituir_tudo(doc, "{{hora_retirada}}", hora_retirada)
+            substituir_tudo(doc, "{{endereco}}", endereco)
 
-            substituir("{{data_evento}}", data_evento.strftime("%d/%m/%Y"))
-            substituir("{{hora_entrega}}", hora_entrega)
-            substituir("{{hora_retirada}}", hora_retirada)
-            substituir("{{endereco}}", endereco)
+            substituir_tudo(doc, "{{lista_brinquedos}}", brinquedos)
 
-            substituir("{{lista_brinquedos}}", brinquedos)
+            substituir_tudo(doc, "{{valor_total}}", f"{valor_total:,.2f}")
+            substituir_tudo(doc, "{{valor_entrada}}", f"{entrada:,.2f}")
+            substituir_tudo(doc, "{{valor_restante}}", f"{restante:,.2f}")
 
-            substituir("{{valor_total}}", f"{valor_total:,.2f}")
-            substituir("{{valor_entrada}}", f"{entrada:,.2f}")
-            substituir("{{valor_restante}}", f"{restante:,.2f}")
-
-            # =========================
-            # 💾 SALVAR
-            # =========================
+            # 💾 Salvar
             nome_arquivo = f"contrato_{cliente.replace(' ', '_')}.docx"
             doc.save(nome_arquivo)
 
             st.success("✅ Contrato gerado com sucesso!")
 
-            # =========================
-            # ⬇ DOWNLOAD
-            # =========================
+            # 📥 Download
             with open(nome_arquivo, "rb") as f:
                 st.download_button(
-                    label="⬇️ Baixar contrato",
-                    data=f,
-                    file_name=nome_arquivo,
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    "⬇️ Baixar contrato",
+                    f,
+                    file_name=nome_arquivo
                 )
 
         except Exception as e:
