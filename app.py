@@ -3868,7 +3868,8 @@ def pagina_contratos():
     ])
 
     clientes = carregar_dados("clientes", [
-        "nome","cpf","rg","email","telefone","endereco"
+        "nome","cpf","rg","email","telefone",
+        "logradouro","numero","complemento","cidade","cep"
     ])
 
     if reservas.empty:
@@ -3890,16 +3891,35 @@ def pagina_contratos():
     # =========================
     # 🔎 BUSCAR CLIENTE
     # =========================
-    cliente = clientes[
+    cliente_df = clientes[
         clientes["nome"].str.strip().str.lower() == str(reserva["cliente"]).strip().lower()
     ]
 
-    if cliente.empty:
+    if cliente_df.empty:
         st.warning("⚠️ Cliente não encontrado na base")
         cliente = {}
     else:
-        cliente = cliente.iloc[0]
+        cliente = cliente_df.iloc[0].to_dict()
 
+    # =========================
+    # 🏠 MONTAR ENDEREÇO
+    # =========================
+    logradouro = cliente.get("logradouro", "")
+    numero = cliente.get("numero", "")
+    complemento = cliente.get("complemento", "")
+    cidade = cliente.get("cidade", "")
+    cep = cliente.get("cep", "")
+
+    endereco_completo = " - ".join(filter(None, [
+        f"{logradouro}, {numero}" if logradouro else "",
+        complemento,
+        cidade,
+        f"CEP: {cep}" if cep else ""
+    ]))
+
+    # =========================
+    # 👀 EXIBIR DADOS
+    # =========================
     st.divider()
 
     st.subheader("📋 Dados encontrados")
@@ -3907,6 +3927,7 @@ def pagina_contratos():
     st.write("👤 Cliente:", reserva["cliente"])
     st.write("📅 Data:", reserva["data"])
     st.write("🎠 Brinquedos:", reserva["brinquedos"])
+    st.write("🏠 Endereço:", endereco_completo)
 
     # =========================
     # 🔧 FUNÇÃO SUBSTITUIR
@@ -3935,26 +3956,22 @@ def pagina_contratos():
             # =========================
             # 💰 CÁLCULOS
             # =========================
-            valor_total = (
-                reserva["valor_total"]
-
-            )
-
+            valor_total = reserva["valor_total"]
             entrada = reserva["sinal"]
             restante = reserva["falta"]
 
             # =========================
-            # 🔁 SUBSTITUIÇÕES CLIENTE
+            # 🔁 CLIENTE
             # =========================
             substituir_tudo(doc, "{{cliente_nome}}", reserva["cliente"])
             substituir_tudo(doc, "{{cliente_cpf}}", cliente.get("cpf", ""))
             substituir_tudo(doc, "{{cliente_rg}}", cliente.get("rg", ""))
             substituir_tudo(doc, "{{cliente_email}}", cliente.get("email", ""))
             substituir_tudo(doc, "{{cliente_telefone}}", cliente.get("telefone", ""))
-            substituir_tudo(doc, "{{endereco}}", cliente.get("endereco", ""))
+            substituir_tudo(doc, "{{endereco}}", endereco_completo)
 
             # =========================
-            # 🔁 SUBSTITUIÇÕES EVENTO
+            # 🔁 EVENTO
             # =========================
             substituir_tudo(
                 doc,
@@ -3964,11 +3981,10 @@ def pagina_contratos():
 
             substituir_tudo(doc, "{{hora_entrega}}", reserva["horario_entrega"])
             substituir_tudo(doc, "{{hora_retirada}}", reserva["horario_retirada"])
-
             substituir_tudo(doc, "{{lista_brinquedos}}", reserva["brinquedos"])
 
             # =========================
-            # 🔁 SUBSTITUIÇÕES VALORES
+            # 🔁 VALORES
             # =========================
             substituir_tudo(doc, "{{valor_total}}", f"{valor_total:,.2f}")
             substituir_tudo(doc, "{{valor_entrada}}", f"{entrada:,.2f}")
