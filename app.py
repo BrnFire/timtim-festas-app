@@ -3847,77 +3847,77 @@ def pagina_contratos():
     import streamlit as st
     from docx import Document
     import os
+    import pandas as pd
 
     st.title("📄 Gerar Contratos")
 
-    # =========================
-    # 📂 CAMINHO DO MODELO
-    # =========================
     caminho_modelo = "modelos/contrato_modelo.docx"
 
     if not os.path.exists(caminho_modelo):
-        st.error("❌ Modelo Word não encontrado na pasta /modelos")
+        st.error("❌ Modelo não encontrado")
         return
 
-    st.success("✅ Modelo carregado")
+    # =========================
+    # 📦 CARREGAR DADOS
+    # =========================
+    reservas = carregar_dados("reservas", [
+        "id","cliente","brinquedos","data",
+        "horario_entrega","horario_retirada",
+        "valor_total","valor_extra","frete","desconto",
+        "sinal","falta","observacao","status"
+    ])
+
+    clientes = carregar_dados("clientes", [
+        "nome","cpf","rg","email","telefone","endereco"
+    ])
+
+    if reservas.empty:
+        st.warning("Sem reservas")
+        return
 
     # =========================
-    # 🧾 FORMULÁRIO
+    # 🔽 ESCOLHER RESERVA
     # =========================
-    st.subheader("📋 Dados do Cliente")
+    reservas["label"] = reservas["cliente"] + " - " + reservas["data"].astype(str)
 
-    col1, col2 = st.columns(2)
+    reserva_sel = st.selectbox(
+        "Selecione a reserva:",
+        reservas["label"]
+    )
 
-    with col1:
-        cliente = st.text_input("Nome")
-        cpf = st.text_input("CPF")
-        rg = st.text_input("RG")
-
-    with col2:
-        telefone = st.text_input("Telefone")
-        email = st.text_input("Email")
-
-    st.subheader("📅 Evento")
-
-    col3, col4 = st.columns(2)
-
-    with col3:
-        data_evento = st.date_input("Data")
-        hora_entrega = st.text_input("Hora entrega")
-
-    with col4:
-        hora_retirada = st.text_input("Hora retirada")
-        endereco = st.text_input("Endereço")
-
-    st.subheader("🎠 Brinquedos")
-    brinquedos = st.text_area("Lista de brinquedos")
-
-    st.subheader("💰 Valores")
-
-    col5, col6, col7 = st.columns(3)
-
-    with col5:
-        valor_total = st.number_input("Valor total", value=0.0)
-
-    with col6:
-        entrada = st.number_input("Entrada", value=0.0)
-
-    with col7:
-        restante = st.number_input("Restante", value=0.0)
+    reserva = reservas[reservas["label"] == reserva_sel].iloc[0]
 
     # =========================
-    # 🔧 FUNÇÃO CORRIGIDA
+    # 🔎 BUSCAR CLIENTE
+    # =========================
+    cliente = clientes[
+        clientes["nome"].str.strip().str.lower() == str(reserva["cliente"]).strip().lower()
+    ]
+
+    if cliente.empty:
+        st.warning("⚠️ Cliente não encontrado na base")
+        cliente = {}
+    else:
+        cliente = cliente.iloc[0]
+
+    st.divider()
+
+    st.subheader("📋 Dados encontrados")
+
+    st.write("👤 Cliente:", reserva["cliente"])
+    st.write("📅 Data:", reserva["data"])
+    st.write("🎠 Brinquedos:", reserva["brinquedos"])
+
+    # =========================
+    # 🔧 FUNÇÃO SUBSTITUIR
     # =========================
     def substituir_tudo(doc, chave, valor):
+        valor = str(valor) if valor is not None else ""
 
-        valor = str(valor)
-
-        # Parágrafos
         for p in doc.paragraphs:
             if chave in p.text:
                 p.text = p.text.replace(chave, valor)
 
-        # Tabelas
         for table in doc.tables:
             for row in table.rows:
                 for cell in row.cells:
@@ -3927,36 +3927,63 @@ def pagina_contratos():
     # =========================
     # 📄 GERAR CONTRATO
     # =========================
-    if st.button("📄 Gerar contrato"):
+    if st.button("📄 Gerar contrato automático"):
 
         try:
             doc = Document(caminho_modelo)
 
-            # 🔁 Substituições
-            substituir_tudo(doc, "{{cliente_nome}}", cliente)
-            substituir_tudo(doc, "{{cliente_cpf}}", cpf)
-            substituir_tudo(doc, "{{cliente_rg}}", rg)
-            substituir_tudo(doc, "{{cliente_email}}", email)
-            substituir_tudo(doc, "{{cliente_telefone}}", telefone)
+            # =========================
+            # 💰 CÁLCULOS
+            # =========================
+            valor_total = (
+                reserva["valor_total"] +
+                reserva["valor_extra"] +
+                reserva["frete"] -
+                reserva["desconto"]
+            )
 
-            substituir_tudo(doc, "{{data_evento}}", data_evento.strftime("%d/%m/%Y"))
-            substituir_tudo(doc, "{{hora_entrega}}", hora_entrega)
-            substituir_tudo(doc, "{{hora_retirada}}", hora_retirada)
-            substituir_tudo(doc, "{{endereco}}", endereco)
+            entrada = reserva["sinal"]
+            restante = valor_total - entrada
 
-            substituir_tudo(doc, "{{lista_brinquedos}}", brinquedos)
+            # =========================
+            # 🔁 SUBSTITUIÇÕES CLIENTE
+            # =========================
+            substituir_tudo(doc, "{{cliente_nome}}", reserva["cliente"])
+            substituir_tudo(doc, "{{cliente_cpf}}", cliente.get("cpf", ""))
+            substituir_tudo(doc, "{{cliente_rg}}", cliente.get("rg", ""))
+            substituir_tudo(doc, "{{cliente_email}}", cliente.get("email", ""))
+            substituir_tudo(doc, "{{cliente_telefone}}", cliente.get("telefone", ""))
+            substituir_tudo(doc, "{{endereco}}", cliente.get("endereco", ""))
 
+            # =========================
+            # 🔁 SUBSTITUIÇÕES EVENTO
+            # =========================
+            substituir_tudo(
+                doc,
+                "{{data_evento}}",
+                pd.to_datetime(reserva["data"]).strftime("%d/%m/%Y")
+            )
+
+            substituir_tudo(doc, "{{hora_entrega}}", reserva["horario_entrega"])
+            substituir_tudo(doc, "{{hora_retirada}}", reserva["horario_retirada"])
+
+            substituir_tudo(doc, "{{lista_brinquedos}}", reserva["brinquedos"])
+
+            # =========================
+            # 🔁 SUBSTITUIÇÕES VALORES
+            # =========================
             substituir_tudo(doc, "{{valor_total}}", f"{valor_total:,.2f}")
             substituir_tudo(doc, "{{valor_entrada}}", f"{entrada:,.2f}")
             substituir_tudo(doc, "{{valor_restante}}", f"{restante:,.2f}")
 
-            # 💾 Salvar
-            nome_arquivo = f"contrato_{cliente.replace(' ', '_')}.docx"
+            # =========================
+            # 💾 SALVAR
+            # =========================
+            nome_arquivo = f"contrato_{reserva['cliente'].replace(' ', '_')}.docx"
             doc.save(nome_arquivo)
 
-            st.success("✅ Contrato gerado com sucesso!")
+            st.success("✅ Contrato gerado com dados completos!")
 
-            # 📥 Download
             with open(nome_arquivo, "rb") as f:
                 st.download_button(
                     "⬇️ Baixar contrato",
@@ -3965,7 +3992,7 @@ def pagina_contratos():
                 )
 
         except Exception as e:
-            st.error(f"❌ Erro ao gerar contrato: {e}")
+            st.error(f"❌ Erro: {e}")
 
 # ========================================
 # PAGINA CONTRATO FIM
