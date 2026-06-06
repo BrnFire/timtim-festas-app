@@ -3936,14 +3936,12 @@ def pagina_contratos():
             # 💰 CÁLCULOS
             # =========================
             valor_total = (
-                reserva["valor_total"] +
-                reserva["valor_extra"] +
-                reserva["frete"] -
-                reserva["desconto"]
+                reserva["valor_total"]
+
             )
 
             entrada = reserva["sinal"]
-            restante = valor_total - entrada
+            entrada = reserva["falta"]
 
             # =========================
             # 🔁 SUBSTITUIÇÕES CLIENTE
