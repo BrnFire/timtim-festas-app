@@ -3941,7 +3941,7 @@ def pagina_contratos():
             )
 
             entrada = reserva["sinal"]
-            entrada = reserva["falta"]
+            restante = reserva["falta"]
 
             # =========================
             # 🔁 SUBSTITUIÇÕES CLIENTE
