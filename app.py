@@ -1176,6 +1176,30 @@ def pagina_reservas():
                 "nome", "data", "ocasiao", "tema"
             ])
 
+            if 'pre_reservas' in globals() and pre_reservas is not None:
+
+                data_reserva = pd.to_datetime(row.get("data"), errors="coerce")
+
+                pre = pre_reservas[
+                    (pre_reservas["cliente"].str.strip().str.lower() ==
+                     str(row.get("cliente","")).strip().lower())
+                    &
+                    (pd.to_datetime(pre_reservas["data"], errors="coerce") ==
+                     data_reserva)
+                ]
+
+                if not pre.empty:
+                    pre = pre.iloc[0]
+                    ocasiao = pre.get("ocasiao", "")
+                    tema = pre.get("tema", "")
+                else:
+                    ocasiao = ""
+                    tema = ""
+
+            else:
+                ocasiao = ""
+                tema = ""
+
             ##fim do teste##
             with st.expander(f"🎈 {row.get('cliente','')} - {data_fmt} ({label_tempo})"):
                 st.markdown(f"<div style='background-color:{cor_card};padding:10px;border-radius:8px;'>", unsafe_allow_html=True)
