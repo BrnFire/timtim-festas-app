@@ -1168,7 +1168,7 @@ def pagina_reservas():
                 else f"🟡 Faltam {dias_restantes} dias" if dias_restantes <= 3
                 else f"🟩 Em {dias_restantes} dias"
             )
- ##teste de adção##
+
             
             global pre_reservas
 
@@ -1200,7 +1200,7 @@ def pagina_reservas():
                 ocasiao = ""
                 tema = ""
 
-            ##fim do teste##
+
             with st.expander(f"🎈 {row.get('cliente','')} - {data_fmt} ({label_tempo})"):
                 st.markdown(f"<div style='background-color:{cor_card};padding:10px;border-radius:8px;'>", unsafe_allow_html=True)
 
