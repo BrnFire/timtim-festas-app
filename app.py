@@ -1170,13 +1170,9 @@ def pagina_reservas():
             )
  ##teste de adção##
             
-                pre_reservas = carregar_dados("pre_reservas", [
-                "cliente", "data", "ocasiao", "tema"
-                ])
 
-            
-                pre = pre_reservas[
-                (pre_reservas["cliente"].str.strip().str.lower() == str(row.get("cliente","")).strip().lower()) &
+            pre = pre_reservas[
+                (pre_reservas["nome"].str.strip().str.lower() == str(row.get("cliente","")).strip().lower()) &
                 (pd.to_datetime(pre_reservas["data"]).dt.date == pd.to_datetime(row.get("data")).date())
             ]
 
@@ -1188,11 +1184,13 @@ def pagina_reservas():
                 ocasiao = ""
                 tema = ""
 
-
             ##fim do teste##
             with st.expander(f"🎈 {row.get('cliente','')} - {data_fmt} ({label_tempo})"):
                 st.markdown(f"<div style='background-color:{cor_card};padding:10px;border-radius:8px;'>", unsafe_allow_html=True)
-
+                
+                st.write(f"**Ocasião:** {ocasiao or '-'}")
+                st.write(f"**Tema:** {tema or '-'}")
+                
                 st.write(f"**Brinquedos:** {row.get('brinquedos','')}")
                 st.write(f"**Horário Entrega:** {row.get('horario_entrega','')}")
                 st.write(f"**Horário Retirada:** {row.get('horario_retirada','')}")
