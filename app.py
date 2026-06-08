@@ -1181,11 +1181,11 @@ def pagina_reservas():
                 data_reserva = pd.to_datetime(row.get("data"), errors="coerce")
 
                 pre = pre_reservas[
-                    (pre_reservas["cliente"].str.strip().str.lower() ==
+                    (pre_reservas["nome"].str.strip().str.lower() ==
                      str(row.get("cliente","")).strip().lower())
                     &
                     (pd.to_datetime(pre_reservas["data"], errors="coerce") ==
-                     data_reserva)
+                     data)
                 ]
 
                 if not pre.empty:
