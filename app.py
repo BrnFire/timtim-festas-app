@@ -1185,7 +1185,7 @@ def pagina_reservas():
                      str(row.get("cliente","")).strip().lower())
                     &
                     (pd.to_datetime(pre_reservas["data"], errors="coerce") ==
-                     data)
+                     data_reserva)
                 ]
 
                 if not pre.empty:
