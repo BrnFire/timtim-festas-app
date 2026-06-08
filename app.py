@@ -1170,27 +1170,16 @@ def pagina_reservas():
             )
  ##teste de adção##
             
+            global pre_reservas
 
-            pre = pre_reservas[
-                (pre_reservas["nome"].str.strip().str.lower() == str(row.get("cliente","")).strip().lower()) &
-                (pd.to_datetime(pre_reservas["data"]).dt.date == pd.to_datetime(row.get("data")).date())
-            ]
-
-            if not pre.empty:
-                pre = pre.iloc[0]
-                ocasiao = pre.get("ocasiao", "")
-                tema = pre.get("tema", "")
-            else:
-                ocasiao = ""
-                tema = ""
+            pre_reservas = carregar_dados("pre_reservas", [
+                "nome", "data", "ocasiao", "tema"
+            ])
 
             ##fim do teste##
             with st.expander(f"🎈 {row.get('cliente','')} - {data_fmt} ({label_tempo})"):
                 st.markdown(f"<div style='background-color:{cor_card};padding:10px;border-radius:8px;'>", unsafe_allow_html=True)
-                
-                st.write(f"**Ocasião:** {ocasiao or '-'}")
-                st.write(f"**Tema:** {tema or '-'}")
-                
+                                
                 st.write(f"**Brinquedos:** {row.get('brinquedos','')}")
                 st.write(f"**Horário Entrega:** {row.get('horario_entrega','')}")
                 st.write(f"**Horário Retirada:** {row.get('horario_retirada','')}")
