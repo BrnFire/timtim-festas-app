@@ -1808,10 +1808,18 @@ def pagina_custos():
                         "forma_de_pagamento": forma,
                         "observacao": observacao
                     }
-                    df.loc[len(df)] = novo
-                    salvar_dados(df, "custos")
+
+                    
+                    # ✅ INSERE APENAS UM REGISTRO (sem duplicar)
+                    try:
+                        inserir_um("custos", novo)
+                    except:
+                        # fallback (caso sua função inserir_um falhe)
+                        df.loc[len(df)] = novo
+                        salvar_dados(df.drop_duplicates(), "custos")
+
                     st.success(f"✅ Custo '{descricao}' registrado com sucesso!")
-                    st.rerun()
+                    st.rerun()                
                 else:
                     st.warning("⚠️ Informe uma descrição e um valor maior que zero.")
 
@@ -1856,6 +1864,7 @@ def pagina_custos():
                             st.rerun()
         else:
             st.info("Nenhum custo cadastrado ainda.")
+            
 
     # ============================================================
     # 🏦 ABA 2 - EMPRÉSTIMOS
