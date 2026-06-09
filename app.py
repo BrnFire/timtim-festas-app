@@ -4000,10 +4000,14 @@ def pagina_contratos():
         value=reserva.get("autentique_id", "") or ""
     )
 
+    from supabase_rest import table_update
     def atualizar_campo(campo, valor):
-        supabase.table("reservas").update({
-            campo: valor
-        }).eq("id", reserva["id"]).execute()
+        table_update(
+            "reservas",
+            {"id": reserva["id"]},
+            {campo: valor}
+        )
+
 
     if st.button("💾 Salvar ID"):
         atualizar_campo("autentique_id", autentique_id_input)
