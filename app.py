@@ -4065,7 +4065,7 @@ def pagina_contratos():
             status = "pending"
 
             # ✅ pega data real da API
-            data_api = assinatura.get("created_at")
+           # data_api = assinatura.get("created_at")
 
             if data_api:
                 data_formatada = pd.to_datetime(data_api).strftime("%d/%m/%Y %H:%M")
