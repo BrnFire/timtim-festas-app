@@ -3893,90 +3893,228 @@ def pagina_contratos():
     from docx import Document
     import os
     import pandas as pd
+    from datetime import datetime
+    import subprocess
+
 
     st.title("📄 Gerar Contratos")
 
+
     caminho_modelo = "modelos/contrato_modelo.docx"
+
 
     if not os.path.exists(caminho_modelo):
         st.error("❌ Modelo não encontrado")
         return
 
+
     # =========================
-    # 📦 DADOS
+    # 📦 CARREGAR DADOS
     # =========================
     reservas = carregar_dados("reservas", [
-        "id", "cliente", "data"
+        "id","cliente","brinquedos","data",
+        "horario_entrega","horario_retirada",
+        "valor_total","valor_extra","frete","desconto",
+        "sinal","falta","observacao","status"
     ])
+
 
     clientes = carregar_dados("clientes", [
-        "nome", "telefone"
+        "nome","cpf","rg","email","telefone",
+        "logradouro","numero","complemento","cidade","cep"
     ])
 
+
     if reservas.empty:
-        st.warning("⚠️ Nenhuma reserva encontrada")
+        st.warning("Sem reservas")
         return
 
+
+    # =========================
+    # 🔽 ESCOLHER RESERVA
+    # =========================
     reservas["label"] = reservas["cliente"] + " - " + reservas["data"].astype(str)
+
 
     reserva_sel = st.selectbox("Selecione a reserva:", reservas["label"])
     reserva = reservas[reservas["label"] == reserva_sel].iloc[0]
 
+
     # =========================
-    # 🔎 CLIENTE
+    # 🔎 BUSCAR CLIENTE
     # =========================
     cliente_df = clientes[
-        clientes["nome"].str.lower() == str(reserva["cliente"]).lower()
+        clientes["nome"].str.strip().str.lower() ==
+        str(reserva["cliente"]).strip().lower()
     ]
 
-    cliente = cliente_df.iloc[0] if not cliente_df.empty else {}
 
-    nome_cliente = cliente.get("nome", reserva["cliente"])
-    telefone_cliente = cliente.get("telefone", "")
+    if cliente_df.empty:
+        st.warning("⚠️ Cliente não encontrado")
+        cliente = {}
+    else:
+        cliente = cliente_df.iloc[0].to_dict()
+
 
     # =========================
-    # 👀 EXIBIÇÃO
+    # 🏠 MONTAR ENDEREÇO
+    # =========================
+    endereco_completo = " - ".join(filter(None, [
+        f"{cliente.get('logradouro','')}, {cliente.get('numero','')}" if cliente.get("logradouro") else "",
+        cliente.get("complemento", ""),
+        cliente.get("cidade", ""),
+        f"CEP: {cliente.get('cep','')}" if cliente.get("cep") else ""
+    ]))
+
+
+    # =========================
+    # 👀 EXIBIR DADOS
     # =========================
     st.divider()
-    st.subheader("📋 Dados")
 
-    st.write(f"👤 Cliente: {nome_cliente}")
-    st.write(f"📞 Telefone: {telefone_cliente}")
-    st.write(f"📅 Data: {reserva['data']}")
+
+    st.subheader("📋 Dados encontrados")
+    st.write("👤 Cliente:", reserva["cliente"])
+    st.write("📅 Data:", reserva["data"])
+    st.write("🎠 Brinquedos:", reserva["brinquedos"])
+    st.write("🏠 Endereço:", endereco_completo)
+
+
+    # =========================
+    # 🔧 FUNÇÃO SUBSTITUIR
+    # =========================
+    def substituir_tudo(doc, chave, valor):
+        valor = str(valor) if valor is not None else ""
+
+
+        for p in doc.paragraphs:
+            if chave in p.text:
+                p.text = p.text.replace(chave, valor)
+
+
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    if chave in cell.text:
+                        cell.text = cell.text.replace(chave, valor)
+
 
     # =========================
     # 📄 GERAR CONTRATO
     # =========================
     if st.button("📄 Gerar contrato"):
 
+
         try:
             doc = Document(caminho_modelo)
 
-            substituir = {
-                "{{cliente_nome}}": nome_cliente,
-                "{{telefone}}": telefone_cliente,
-                "{{data_evento}}": str(reserva["data"])
-            }
 
-            for p in doc.paragraphs:
-                for chave, valor in substituir.items():
-                    if chave in p.text:
-                        p.text = p.text.replace(chave, valor)
+            # =========================
+            # 🗓️ DATA ATUAL
+            # =========================
+            data_atual = datetime.now()
+            dia = data_atual.strftime("%d")
+            mes = data_atual.strftime("%B").capitalize()
+            ano = data_atual.strftime("%Y")
 
-            nome_docx = f"contrato_{nome_cliente.replace(' ', '_')}.docx"
+
+            # =========================
+            # 💰 VALORES
+            # =========================
+            valor_total = reserva["valor_total"]
+            entrada = reserva["sinal"]
+            restante = reserva["falta"]
+
+
+            # =========================
+            # 🔁 CLIENTE
+            # =========================
+            substituir_tudo(doc, "{{cliente_nome}}", reserva["cliente"])
+            substituir_tudo(doc, "{{cliente_cpf}}", cliente.get("cpf", ""))
+            substituir_tudo(doc, "{{cliente_rg}}", cliente.get("rg", ""))
+            substituir_tudo(doc, "{{cliente_email}}", cliente.get("email", ""))
+            substituir_tudo(doc, "{{cliente_telefone}}", cliente.get("telefone", ""))
+            substituir_tudo(doc, "{{endereco}}", endereco_completo)
+
+
+            # =========================
+            # 🔁 EVENTO
+            # =========================
+            substituir_tudo(
+                doc,
+                "{{data_evento}}",
+                pd.to_datetime(reserva["data"]).strftime("%d/%m/%Y")
+            )
+
+
+            substituir_tudo(doc, "{{hora_entrega}}", reserva["horario_entrega"])
+            substituir_tudo(doc, "{{hora_retirada}}", reserva["horario_retirada"])
+            substituir_tudo(doc, "{{lista_brinquedos}}", reserva["brinquedos"])
+
+
+            # =========================
+            # 🔁 DATA CONTRATO
+            # =========================
+            substituir_tudo(doc, "{{dia}}", dia)
+            substituir_tudo(doc, "{{mes}}", mes)
+            substituir_tudo(doc, "{{ano}}", ano)
+
+
+            # =========================
+            # 🔁 VALORES
+            # =========================
+            substituir_tudo(doc, "{{valor_total}}", f"{valor_total:,.2f}")
+            substituir_tudo(doc, "{{valor_entrada}}", f"{entrada:,.2f}")
+            substituir_tudo(doc, "{{valor_restante}}", f"{restante:,.2f}")
+
+
+            # =========================
+            # 💾 SALVAR DOCX
+            # =========================
+            nome_docx = f"contrato_{reserva['cliente'].replace(' ', '_')}.docx"
             doc.save(nome_docx)
 
-            with open(nome_docx, "rb") as f:
-                st.download_button(
-                    "⬇️ Baixar contrato",
-                    f,
-                    file_name=nome_docx
-                )
 
-            st.success("✅ Contrato gerado com sucesso")
+            st.success("✅ Contrato Word gerado!")
+
+
+            with open(nome_docx, "rb") as f:
+                st.download_button("⬇️ Baixar Word", f, file_name=nome_docx)
+
+
+            # =========================
+            # 📄 BOTÃO GERAR PDF
+            # =========================
+            def converter_para_pdf(nome_docx):
+                try:
+                    subprocess.run([
+                        "libreoffice",
+                        "--headless",
+                        "--convert-to",
+                        "pdf",
+                        nome_docx
+                    ])
+                    return nome_docx.replace(".docx", ".pdf")
+                except:
+                    return None
+
+
+            if st.button("📄 Gerar PDF"):
+
+
+                pdf = converter_para_pdf(nome_docx)
+
+
+                if pdf and os.path.exists(pdf):
+                    with open(pdf, "rb") as f:
+                        st.download_button("⬇️ Baixar PDF", f, file_name=pdf)
+                    st.success("✅ PDF gerado com sucesso!")
+                else:
+                    st.warning("⚠️ Não foi possível gerar o PDF no servidor")
+
 
         except Exception as e:
-            st.error(f"Erro ao gerar contrato: {e}")
+            st.error(f"❌ Erro: {e}")
 
 
 # ========================================
