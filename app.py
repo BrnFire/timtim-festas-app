@@ -3888,7 +3888,6 @@ def pagina_funcionarios():
 # MÓDULO: CONTRATOS
 # =========================================
 
-
 def pagina_contratos():
     import streamlit as st
     from docx import Document
@@ -3910,22 +3909,22 @@ def pagina_contratos():
     # 📦 CARREGAR DADOS
     # =========================
     reservas = carregar_dados("reservas", [
-        "id","cliente","brinquedos","data",
-        "horario_entrega","horario_retirada",
-        "valor_total","sinal","falta",
+        "id","cliente","data",
         "autentique_id","status_assinatura",
         "data_envio","data_assinatura","tipo_envio"
     ])
 
     clientes = carregar_dados("clientes", [
-        "nome","email","telefone"
+        "nome","telefone","email"
     ])
 
     reservas["label"] = reservas["cliente"] + " - " + reservas["data"].astype(str)
-
     reserva_sel = st.selectbox("Selecione a reserva:", reservas["label"])
     reserva = reservas[reservas["label"] == reserva_sel].iloc[0]
 
+    # =========================
+    # 🔎 CLIENTE (DADOS INTERNOS)
+    # =========================
     cliente_df = clientes[
         clientes["nome"].str.lower() == str(reserva["cliente"]).lower()
     ]
@@ -3939,7 +3938,8 @@ def pagina_contratos():
     # 👀 EXIBIÇÃO
     # =========================
     st.divider()
-    st.subheader("📋 Dados")
+    st.subheader("📋 Cliente")
+
     st.write(f"👤 {nome_cliente}")
     st.write(f"📞 {telefone_cliente}")
 
@@ -3952,14 +3952,14 @@ def pagina_contratos():
     status = reserva.get("status_assinatura")
 
     if status == "signed":
-        st.success("✅ Cliente assinou")
+        st.success("✅ Cliente assinou o contrato")
     elif status == "pending":
         st.warning("⏳ Aguardando assinatura")
     else:
         st.info("ℹ️ Não enviado")
 
     # =========================
-    # 📅 DATAS / ENVIO
+    # 📅 INFORMAÇÕES
     # =========================
     st.markdown("### 📅 Informações")
 
@@ -4002,7 +4002,7 @@ def pagina_contratos():
         data_envio = datetime.now().strftime("%d/%m/%Y %H:%M")
         atualizar_campo("data_envio", data_envio)
 
-        st.success("✅ Vinculado com sucesso!")
+        st.success("✅ Vínculo salvo")
 
     # =========================
     # 🔎 CONSULTAR AUTENTIQUE
@@ -4044,7 +4044,7 @@ def pagina_contratos():
 
         assinaturas = data.get("data", {}).get("document", {}).get("signatures", [])
 
-        # ✅ IGNORA TIMTIM
+        # ✅ IGNORAR TIMTIM
         EMAIL_INTERNO = "festastimtim@gmail.com"
 
         assinaturas_cliente = [
@@ -4056,21 +4056,17 @@ def pagina_contratos():
 
         assinatura = assinaturas_cliente[0]
 
-        acao = assinatura.get("action")        
-        data_assinatura = assinatura.get("created_at")
+        acao = assinatura.get("action")
+        data_api = assinatura.get("created_at")
 
-        if (acao and acao.get("name") in ["SIGN", "SIGNED"]) or data_assinatura:        
-            status = "pending"
-        else:
-            status = "pending"
+        # ✅ CORREÇÃO CRÍTICA
+        if (acao and acao.get("name") in ["SIGN", "SIGNED"]) or data_api:
+            status = "signed"
 
-            # ✅ pega data real da API
-           # data_api = assinatura.get("created_at")
-
+            # salva data real (API)
             if data_api:
                 data_formatada = pd.to_datetime(data_api).strftime("%d/%m/%Y %H:%M")
                 atualizar_campo("data_assinatura", data_formatada)
-
         else:
             status = "pending"
 
@@ -4088,12 +4084,12 @@ def pagina_contratos():
                 atualizar_campo("status_assinatura", status_api)
 
                 if status_api == "signed":
-                    st.success("✅ Cliente assinou o contrato")
+                    st.success("✅ Cliente assinou (confirmado pela API)")
                 else:
-                    st.warning("⏳ Ainda não assinou")
+                    st.warning("⏳ Cliente ainda não assinou")
 
             else:
-                st.error("❌ Erro ao consultar Autentique")
+                st.error("❌ Não foi possível consultar o Autentique")
 
     # =========================
     # 📄 GERAR CONTRATO
@@ -4123,7 +4119,7 @@ def pagina_contratos():
             st.success("✅ Contrato gerado")
 
         except Exception as e:
-            st.error(f"Erro: {e}")
+            st.error(f"Erro ao gerar contrato: {e}")
 
 
 
