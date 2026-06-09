@@ -3222,11 +3222,7 @@ def pagina_whatsapp():
         st.divider()
 
 
-        st.markdown(
-            f'<iframe src="{pdf_url}" width="100%" height="900px" '
-            f'style="border:none;" type="application/pdf"></iframe>',
-            unsafe_allow_html=True
-        )
+
 
         st.success("✅ Portfólio carregado diretamente do Supabase!")
 
