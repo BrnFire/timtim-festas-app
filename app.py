@@ -3924,7 +3924,7 @@ def pagina_contratos():
     reserva = reservas[reservas["label"] == reserva_sel].iloc[0]
 
     # =========================
-    # 🔎 CLIENTE
+    # 👤 CLIENTE
     # =========================
     cliente_df = clientes[
         clientes["nome"].str.lower() == str(reserva["cliente"]).lower()
@@ -3957,7 +3957,7 @@ def pagina_contratos():
         st.warning("⏳ Aguardando assinatura")
 
     # =========================
-    # 📅 INFORMAÇÕES
+    # 📅 INFO
     # =========================
     st.markdown("### 📅 Informações")
 
@@ -3971,7 +3971,7 @@ def pagina_contratos():
         st.write(f"✅ Assinado em: {reserva['data_assinatura']}")
 
     # =========================
-    # 🔗 VINCULAR AUTENTIQUE
+    # 🔗 VINCULAR
     # =========================
     st.divider()
     st.subheader("🔗 Autentique")
@@ -3996,7 +3996,7 @@ def pagina_contratos():
         st.success("✅ Vínculo salvo")
 
     # =========================
-    # 🔎 CONSULTAR AUTENTIQUE (VERSÃO FINAL)
+    # 🔎 CONSULTAR AUTENTIQUE (FINAL)
     # =========================
     def consultar_status_autentique(document_id):
 
@@ -4030,7 +4030,7 @@ def pagina_contratos():
 
         data = response.json()
 
-        # DEBUG (pode remover depois)
+        # DEBUG (remover depois)
         st.write("DEBUG API:", data)
 
         if "errors" in data:
@@ -4038,27 +4038,35 @@ def pagina_contratos():
 
         assinaturas = data.get("data", {}).get("document", {}).get("signatures", [])
 
-        total_sign = 0
-        ultima_data = None
+        if not assinaturas:
+            return "pending"
 
-        # ✅ conta quantos realmente têm SIGN
+        data_envio = reserva.get("data_envio")
+
         for assinatura in assinaturas:
+
             acao = assinatura.get("action")
+            data_api = assinatura.get("created_at")
 
-            if acao and acao.get("name") == "SIGN":
-                total_sign += 1
-                ultima_data = assinatura.get("created_at")
+            if acao and acao.get("name") == "SIGN" and data_api and data_envio:
 
-        # ✅ REGRA FINAL
-        if total_sign >= 2:
+                try:
+                    dt_sign = pd.to_datetime(data_api, utc=True)
+                    dt_envio = pd.to_datetime(data_envio, dayfirst=True)
 
-            if ultima_data and not reserva.get("data_assinatura"):
-                dt = pd.to_datetime(ultima_data, utc=True).tz_convert("America/Sao_Paulo")
-                data_formatada = dt.strftime("%d/%m/%Y %H:%M")
+                    # ✅ REGRA FINAL (CHAVE)
+                    if dt_sign > dt_envio:
 
-                atualizar_campo("data_assinatura", data_formatada)
+                        dt_local = dt_sign.tz_convert("America/Sao_Paulo")
+                        data_formatada = dt_local.strftime("%d/%m/%Y %H:%M")
 
-            return "signed"
+                        if not reserva.get("data_assinatura"):
+                            atualizar_campo("data_assinatura", data_formatada)
+
+                        return "signed"
+
+                except:
+                    pass
 
         return "pending"
 
@@ -4077,7 +4085,6 @@ def pagina_contratos():
                     st.success("✅ Cliente assinou (confirmado)")
                 else:
                     st.warning("⏳ Cliente ainda não assinou")
-
             else:
                 st.error("❌ Erro ao consultar Autentique")
 
