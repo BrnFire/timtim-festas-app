@@ -3919,9 +3919,13 @@ def pagina_contratos():
     ])
 
     reservas["label"] = reservas["cliente"] + " - " + reservas["data"].astype(str)
+
     reserva_sel = st.selectbox("Selecione a reserva:", reservas["label"])
     reserva = reservas[reservas["label"] == reserva_sel].iloc[0]
 
+    # =========================
+    # 🔎 CLIENTE (DADOS INTERNOS)
+    # =========================
     cliente_df = clientes[
         clientes["nome"].str.lower() == str(reserva["cliente"]).lower()
     ]
@@ -3936,6 +3940,7 @@ def pagina_contratos():
     # =========================
     st.divider()
     st.subheader("📋 Cliente")
+
     st.write(f"👤 {nome_cliente}")
     st.write(f"📞 {telefone_cliente}")
 
@@ -3953,7 +3958,7 @@ def pagina_contratos():
         st.warning("⏳ Aguardando assinatura")
 
     # =========================
-    # 📅 INFO
+    # 📅 INFORMAÇÕES
     # =========================
     st.markdown("### 📅 Informações")
 
@@ -3967,7 +3972,7 @@ def pagina_contratos():
         st.write(f"✅ Assinado em: {reserva['data_assinatura']}")
 
     # =========================
-    # 🔗 VINCULAR
+    # 🔗 VINCULAR AUTENTIQUE
     # =========================
     st.divider()
     st.subheader("🔗 Autentique")
@@ -3992,14 +3997,14 @@ def pagina_contratos():
         st.success("✅ Vínculo salvo")
 
     # =========================
-    # 🔎 CONSULTAR AUTENTIQUE
+    # 🔎 CONSULTAR AUTENTIQUE (CORREÇÃO FINAL)
     # =========================
     def consultar_status_autentique(document_id):
 
         url = "https://api.autentique.com.br/v2/graphql"
 
         headers = {
-            "Authorization": "Bearer 33a23a237913f3e59655aec8ccf698f68d31f2f4d05e8dc32b10ebe645d6b87f",
+            "Authorization": "Bearer SEU_TOKEN_AQUI",
             "Content-Type": "application/json"
         }
 
@@ -4022,39 +4027,48 @@ def pagina_contratos():
         response = requests.post(url, json=query, headers=headers)
 
         if response.status_code != 200:
+            st.error(f"Erro HTTP: {response.status_code}")
             return None
 
         data = response.json()
 
+        # debug visual (pode remover depois)
         st.write("DEBUG API:", data)
 
         if "errors" in data:
+            st.error(data["errors"])
             return None
 
         assinaturas = data.get("data", {}).get("document", {}).get("signatures", [])
 
         EMAIL_INTERNO = "festastimtim@gmail.com"
 
-        # ✅ regra final correta
-        for assinatura in assinaturas:
+        # ✅ REMOVE APENAS TIMTIM
+        assinaturas_cliente = [
+            s for s in assinaturas if s.get("email") != EMAIL_INTERNO
+        ]
 
-            email = assinatura.get("email")
+        if not assinaturas_cliente:
+            return "pending"
+
+        # ✅ REGRA FINAL (FUNCIONA PARA EMAIL + WHATSAPP)
+        for assinatura in assinaturas_cliente:
+
             acao = assinatura.get("action")
 
-            # 🔥 só considera se tem email (cliente identificado)
-            if email and email != EMAIL_INTERNO:
+            if acao and acao.get("name") == "SIGN":
 
-                if acao and acao.get("name") == "SIGN":
+                data_api = assinatura.get("created_at")
 
-                    data_api = assinatura.get("created_at")
+                # salva data apenas uma vez
+                if data_api and not reserva.get("data_assinatura"):
 
-                    if data_api and not reserva.get("data_assinatura"):
-                        dt = pd.to_datetime(data_api, utc=True).tz_convert("America/Sao_Paulo")
-                        data_formatada = dt.strftime("%d/%m/%Y %H:%M")
+                    dt = pd.to_datetime(data_api, utc=True).tz_convert("America/Sao_Paulo")
+                    data_formatada = dt.strftime("%d/%m/%Y %H:%M")
 
-                        atualizar_campo("data_assinatura", data_formatada)
+                    atualizar_campo("data_assinatura", data_formatada)
 
-                    return "signed"
+                return "signed"
 
         return "pending"
 
@@ -4073,6 +4087,7 @@ def pagina_contratos():
                     st.success("✅ Cliente assinou (confirmado)")
                 else:
                     st.warning("⏳ Cliente ainda não assinou")
+
             else:
                 st.error("❌ Erro ao consultar Autentique")
 
@@ -4104,7 +4119,7 @@ def pagina_contratos():
             st.success("✅ Contrato gerado")
 
         except Exception as e:
-            st.error(f"Erro: {e}")
+            st.error(f"Erro ao gerar contrato: {e}")
 
 
 # ========================================
