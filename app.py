@@ -4060,7 +4060,7 @@ def pagina_contratos():
         data_api = assinatura.get("created_at")
 
         # ✅ CORREÇÃO CRÍTICA
-        if (acao and acao.get("name") in ["SIGN", "SIGNED"]) or data_api:
+        if acao and acao.get("name") in ["SIGN", "SIGNED"]:
             status = "signed"
 
             # salva data real (API)
