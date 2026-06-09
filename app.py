@@ -3923,7 +3923,7 @@ def pagina_contratos():
     reserva = reservas[reservas["label"] == reserva_sel].iloc[0]
 
     # =========================
-    # 🔎 CLIENTE INTERNO
+    # 🔎 CLIENTE (dados internos)
     # =========================
     cliente_df = clientes[
         clientes["nome"].str.lower() == str(reserva["cliente"]).lower()
@@ -3939,7 +3939,6 @@ def pagina_contratos():
     # =========================
     st.divider()
     st.subheader("📋 Cliente")
-
     st.write(f"👤 {nome_cliente}")
     st.write(f"📞 {telefone_cliente}")
 
@@ -3959,7 +3958,7 @@ def pagina_contratos():
         st.info("ℹ️ Não enviado")
 
     # =========================
-    # 📅 INFO
+    # 📅 INFORMAÇÕES
     # =========================
     st.markdown("### 📅 Informações")
 
@@ -4002,7 +4001,7 @@ def pagina_contratos():
         data_envio = datetime.now().strftime("%d/%m/%Y %H:%M")
         atualizar_campo("data_envio", data_envio)
 
-        st.success("✅ Vínculo salvo")
+        st.success("✅ Vínculo salvo com sucesso")
 
     # =========================
     # 🔎 CONSULTAR AUTENTIQUE
@@ -4044,9 +4043,9 @@ def pagina_contratos():
 
         assinaturas = data.get("data", {}).get("document", {}).get("signatures", [])
 
-        # ✅ IGNORAR TIMTIM
         EMAIL_INTERNO = "festastimtim@gmail.com"
 
+        # ✅ pegar APENAS cliente
         assinaturas_cliente = [
             s for s in assinaturas if s.get("email") != EMAIL_INTERNO
         ]
@@ -4054,27 +4053,29 @@ def pagina_contratos():
         if not assinaturas_cliente:
             return "pending"
 
-        # 🔥 VERIFICA TODAS (importante!)
+        assinou = False
+
         for assinatura in assinaturas_cliente:
 
             acao = assinatura.get("action")
 
-            # ✅ REGRA DEFINITIVA
+            # ✅ REGRA ÚNICA E CORRETA
             if acao is not None and acao.get("name") == "SIGN":
+
+                assinou = True
 
                 data_api = assinatura.get("created_at")
 
-                # salvar data real (apenas uma vez)
+                # salva data só uma vez
                 if data_api and not reserva.get("data_assinatura"):
-
                     dt = pd.to_datetime(data_api, utc=True).tz_convert("America/Sao_Paulo")
                     data_formatada = dt.strftime("%d/%m/%Y %H:%M")
 
                     atualizar_campo("data_assinatura", data_formatada)
 
-                return "signed"
+                break
 
-        return "pending"
+        return "signed" if assinou else "pending"
 
     # =========================
     # 🔄 ATUALIZAR STATUS
@@ -4088,12 +4089,12 @@ def pagina_contratos():
                 atualizar_campo("status_assinatura", status_api)
 
                 if status_api == "signed":
-                    st.success("✅ Cliente assinou (confirmado)")
+                    st.success("✅ Status confirmado: cliente assinou")
                 else:
                     st.warning("⏳ Cliente ainda não assinou")
 
             else:
-                st.error("❌ Erro ao consultar API")
+                st.error("❌ Erro ao consultar Autentique")
 
     # =========================
     # 📄 GERAR CONTRATO
@@ -4120,10 +4121,10 @@ def pagina_contratos():
             with open(nome_docx, "rb") as f:
                 st.download_button("⬇️ Baixar contrato", f, file_name=nome_docx)
 
-            st.success("✅ Contrato gerado com sucesso")
+            st.success("✅ Contrato gerado")
 
         except Exception as e:
-            st.error(f"Erro: {e}")
+            st.error(f"Erro ao gerar contrato: {e}")
 
 
 
