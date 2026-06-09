@@ -3931,7 +3931,7 @@ def pagina_contratos():
     reserva_sel = st.selectbox("Selecione a reserva:", reservas["label"])
     reserva = reservas[reservas["label"] == reserva_sel].iloc[0]
 
-    print(response.text)
+    
 
     # =========================
     # 🔎 CLIENTE
@@ -4021,6 +4021,11 @@ def pagina_contratos():
 
         response = requests.post(url, json=query, headers=headers)
 
+
+        print("STATUS HTTP:", response.status_code)
+        print("RESPOSTA COMPLETA:", re
+
+        
         if response.status_code == 200:
             data = response.json()
             return data["data"]["document"]["status"]
