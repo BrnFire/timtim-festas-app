@@ -3215,6 +3215,13 @@ def pagina_whatsapp():
 
         pdf_url = "https://hmrqsjdlixeazdfhrqqh.supabase.co/storage/v1/object/public/portfolio/portifolio_out2025.pdf"
 
+        
+        # ✅ botão sempre funciona
+        st.link_button("📥 Abrir portfólio em nova aba", pdf_url)
+
+        st.divider()
+
+
         st.markdown(
             f'<iframe src="{pdf_url}" width="100%" height="900px" '
             f'style="border:none;" type="application/pdf"></iframe>',
