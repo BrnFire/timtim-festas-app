@@ -4001,13 +4001,6 @@ def pagina_contratos():
     )
 
     def atualizar_campo(campo, valor):
-        from supabase import create_client
-
-        url = "https://hmrqsjdlixeazdfhrqqh.supabase.co"
-        key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhtcnFzamRsaXhlYXpkZmhycXFoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjEyMjE3MDUsImV4cCI6MjA3Njc5NzcwNX0.rM9fob3HIEl2YoL7lB7Tj7vUb21B9EzR1zLSR7VLwTM"
-
-        supabase = create_client(url, key)
-
         supabase.table("reservas").update({
             campo: valor
         }).eq("id", reserva["id"]).execute()
