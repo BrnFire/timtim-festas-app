@@ -4034,7 +4034,7 @@ def pagina_contratos():
 
         # DEBUG
         print("STATUS HTTP:", response.status_code)
-        print("RESPOSTA COMPLETA:", response.text)
+        st.error(response.text)
 
         if response.status_code != 200:
             return None
