@@ -4116,6 +4116,24 @@ def pagina_contratos():
         except Exception as e:
             st.error(f"❌ Erro: {e}")
 
+        import streamlit as st
+
+        st.divider()
+        st.subheader("🔎 Painel Autentique (espelho)")
+
+        # ✅ botão abrir externo (mais confiável)
+        st.link_button(
+            "🔗 Abrir Autentique em nova aba",
+            "https://app.autentique.com.br/documentos"
+        )
+
+        # ✅ iframe (espelho dentro do app)
+        st.components.v1.iframe(
+            "https://app.autentique.com.br/documentos",
+            height=800,
+            scrolling=True
+        )
+
 
 # ========================================
 # PAGINA CONTRATO FIM
