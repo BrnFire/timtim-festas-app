@@ -4031,10 +4031,13 @@ def pagina_contratos():
                         action {{
                             name
                         }}
+                        
+                    }}
 
                 }}
             }}
             
+            """
         }
 
         response = requests.post(url, json=query, headers=headers)
