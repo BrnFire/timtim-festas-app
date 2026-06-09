@@ -4056,10 +4056,13 @@ def pagina_contratos():
 
         assinatura = assinaturas_cliente[0]
 
-        acao = assinatura.get("action")
+        acao = assinatura.get("action")        
+        data_assinatura = assinatura.get("created_at")
 
-        if acao and acao.get("name") == "SIGN":
-            status = "signed"
+        if (acao and acao.get("name") in ["SIGN", "SIGNED"]) or data_assinatura:        
+            status = "pending"
+        else:
+            status = "pending"
 
             # ✅ pega data real da API
             data_api = assinatura.get("created_at")
