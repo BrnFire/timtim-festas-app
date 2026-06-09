@@ -3209,19 +3209,31 @@ def pagina_whatsapp():
     # ======================================================
     # 📘 ABA 3 - PORTFÓLIO MONTESSORI
     # ======================================================
-    
+
     with aba3:
-        st.subheader("📘 Portfólio Montessori TimTim Festas")
+    import streamlit as st
 
-        pdf_url = "https://hmrqsjdlixeazdfhrqqh.supabase.co/storage/v1/object/public/portfolio/portifolio_out2025.pdf"
+    st.subheader("📘 Portfólio Montessori TimTim Festas")
 
-        st.markdown(
-            f'<iframe src="{pdf_url}" width="100%" height="900px" '
-            f'style="border:none;" type="application/pdf"></iframe>',
-            unsafe_allow_html=True
+    # ✅ URL correta (SEM HTML)
+    pdf_url = "https://hmrqsjdlixeazdfhrqqh.supabase.co/storage/v1/object/public/portfolio/portifolio_out2025.pdf"
+
+    # ✅ botão sempre funciona (backup)
+    st.link_button("📥 Abrir portfólio em nova aba", pdf_url)
+
+    # =========================
+    # 📄 EXIBIÇÃO DO PDF
+    # =========================
+    try:
+        st.components.v1.iframe(
+            pdf_url,
+            height=900,
+            scrolling=True
         )
+        st.success("✅ Portfólio carregado dentro do sistema!")
 
-        st.success("✅ Portfólio carregado diretamente do Supabase!")
+    except Exception:
+        st.warning("⚠️ Não foi possível exibir o PDF aqui. Use o botão acima.")
 
 
 
