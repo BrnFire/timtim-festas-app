@@ -3010,16 +3010,39 @@ def pagina_whatsapp():
     aba1, aba2, aba3 = st.tabs(["🧰 Suporte Técnico", "📲 Envio WhatsApp", "📘 Portfólio Montessori"])
 
     # ======================================================
-    # 🧰 ABA 1 - SUPORTE
+    # 🧰 ABA 1 - SUPORTE TÉCNICO
     # ======================================================
     with aba1:
         st.subheader("📖 Informações e respostas rápidas")
         st.info("""
-        (conteúdo igual ao seu)
+        Esta aba é usada para armazenar respostas e instruções rápidas de suporte aos clientes.
+
+        **Tatames:**
+        - Tons Cinzas: 100 Tatames
+        - Tons Azuis Antigo: 20 Tatames
+        - Tons Azuis Novo: 65 Tatames
+        - Tons Beges: 20 Tatames
+        
+        **Quantidade ideal para kits Montessori:**
+        - Kit Doçura: 5m² (20 tatames, base bege)
+        - Kit Alegria: 11 a 16m² (45 a 65 tatames)
+        - Kit Encanto: 18 a 25m² (70 a 100 tatames)
+        - Kit TimTim: 20 a 25m² (80 a 100 tatames)
+
+        **Base de cálculo do frete:**
+        - Montessori → R$ 5,00 por km
+        - Tradicional → R$ 3,00 por km
+        - Menor que 5 km → isento
+
+        **Dados técnicos dos brinquedos:**
+        - Cama Elástica 2,44 m: até 70 kg, 3 crianças por vez
+        - Cama Elástica 1,83 m: até 60 kg, 2 crianças por vez
+        - Tombo Legal: até 70 kg, 1 criança por vez, Bivolt
+        - Mesa Air Game: sem limite de idade, 120 V
         """)
 
     # ======================================================
-    # 📲 ABA 2 - WHATSAPP
+    # 📲 ABA 2 - ENVIO WHATSAPP
     # ======================================================
     with aba2:
         usuario_logado = st.session_state.get("usuario", "")
@@ -3027,13 +3050,14 @@ def pagina_whatsapp():
             st.warning("⚠️ Você não tem permissão para acessar esta aba.")
             return
 
+        # --------------------------
+        # Dados do Supabase
+        # --------------------------
         reservas = carregar_dados(
             "reservas",
-            ["cliente", "brinquedos", "data", "horario_entrega",
-             "horario_retirada", "inicio_festa", "fim_festa",
-             "valor_total", "sinal", "falta", "frete", "status"]
+            ["cliente", "brinquedos", "data", "horario_entrega", "horario_retirada",
+             "inicio_festa", "fim_festa", "valor_total", "sinal", "falta", "frete", "status"]
         )
-
         clientes = carregar_dados("clientes", ["nome", "cep"])
 
         if reservas.empty:
@@ -3045,39 +3069,191 @@ def pagina_whatsapp():
 
         reservas["data"] = pd.to_datetime(reservas["data"], errors="coerce")
         reservas = reservas.dropna(subset=["data"])
-
         reservas = reservas.merge(clientes, how="left", left_on="cliente", right_on="nome").drop(columns=["nome"], errors="ignore")
         reservas["cep"] = reservas["cep"].fillna("")
+        hoje = pd.Timestamp.now().normalize()
 
-        st.subheader("📆 Mensagens")
-        st.write("Gerador funcionando ✅")
+        # --------------------------
+        # Filtros principais
+        # --------------------------
+        col1, col2, col3 = st.columns(3)
+        meses = [
+            (1, "Janeiro"), (2, "Fevereiro"), (3, "Março"), (4, "Abril"),
+            (5, "Maio"), (6, "Junho"), (7, "Julho"), (8, "Agosto"),
+            (9, "Setembro"), (10, "Outubro"), (11, "Novembro"), (12, "Dezembro")
+        ]
+        with col1:
+            mes_sel = st.selectbox("📅 Mês:", options=meses, index=hoje.month - 1, format_func=lambda x: x[1])[0]
+        with col2:
+            ano_sel = st.number_input("📆 Ano:", min_value=2023, max_value=2100, value=hoje.year, step=1)
+        with col3:
+            filtro_periodo = st.radio("📍 Exibir:", ["Todas as datas", "Somente futuras", "Hoje e futuras"], horizontal=True)
 
-    # ======================================================
-    # 📘 ABA 3 - PORTFÓLIO (CORRIGIDA)
-    # ======================================================
-    with aba3:
+        df = reservas[
+            (reservas["data"].dt.month == mes_sel) &
+            (reservas["data"].dt.year == ano_sel)
+        ].copy()
 
-        st.subheader("📘 Portfólio Montessori TimTim Festas")
+        if filtro_periodo == "Somente futuras":
+            df = df[df["data"] > hoje]
+        elif filtro_periodo == "Hoje e futuras":
+            df = df[df["data"] >= hoje]
 
-        # ✅ URL CORRETA (sem HTML bugado)
-        pdf_url = "https://hmrqsjdlixeazdfhrqqh.supabase.co/storage/v1/object/public/portfolio/portifolio_out2025.pdf"
+        if df.empty:
+            st.warning("⚠️ Nenhuma reserva encontrada para o período selecionado.")
+            return
 
-        # ✅ botão sempre funciona
-        st.link_button("📥 Abrir portfólio em nova aba", pdf_url)
+        # --------------------------
+        # Cards resumo
+        # --------------------------
+        total = len(df)
+        futuras = len(df[df["data"] > hoje])
+        concluidas = len(df[df["status"].str.lower() == "concluído"])
+        c1, c2, c3 = st.columns(3)
+        for col, (titulo, valor, cor) in zip(
+            [c1, c2, c3],
+            [
+                ("📅 Total de Reservas", total, "#7A5FFF"),
+                ("🚀 Futuras", futuras, "#2ECC71"),
+                ("✅ Concluídas", concluidas, "#3498DB"),
+            ]
+        ):
+            col.markdown(
+                f"""
+                <div style="background-color:#fff;border-left:6px solid {cor};
+                            border-radius:12px;padding:10px;text-align:center;
+                            box-shadow:2px 2px 10px rgba(0,0,0,0.1);">
+                    <div style="color:#555;">{titulo}</div>
+                    <div style="font-size:1.6em;font-weight:bold;">{valor}</div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
 
         st.divider()
 
-        # ✅ iframe funcionando
-        try:
-            st.components.v1.iframe(
-                pdf_url,
-                height=900,
-                scrolling=True
-            )
-            st.success("✅ Portfólio carregado dentro do sistema!")
+        # --------------------------
+        # Geração das mensagens
+        # --------------------------
+        df = df.sort_values("data")
+        mensagens = []
+        for _, row in df.iterrows():
+            data_fmt = row["data"].strftime("%d/%m")
+            cliente = row.get("cliente", "")
+            brinquedos = row.get("brinquedos", "")
+            cep = str(row.get("cep", "")).replace(".0", "").strip()
+            inicio = row.get("inicio_festa", "")
+            fim = row.get("fim_festa", "")
+            entrega = row.get("horario_entrega", "")
+            retirada = row.get("horario_retirada", "")
+            valor_total = float(row.get("valor_total", 0) or 0)
+            sinal = float(row.get("sinal", 0) or 0)
+            falta = float(row.get("falta", 0) or 0)
+            frete = float(row.get("frete", 0) or 0)
 
-        except Exception:
-            st.warning("⚠️ Não foi possível exibir aqui. Use o botão acima.")
+            msg = f"📍 {data_fmt} – {cliente}\n"
+            if cep:
+                msg += f"🗺️ CEP: {cep}\n"
+            if inicio and fim:
+                msg += f"⏰ Festa: {inicio} - {fim}\n"
+            msg += f"🕘 Entrega: {entrega} | Retirada: {retirada}\n"
+            msg += f"🎠 {brinquedos}\n"
+            if frete > 0:
+                msg += f"🚚 Frete: R$ {frete:,.2f}\n"
+            msg += f"💰 Total: R$ {valor_total:,.2f}\n"
+            msg += f"💳 Pagou: R$ {sinal:,.2f} | 💸 Falta: R$ {falta:,.2f}\n"
+            mensagens.append(msg.strip())
+
+        texto_final = "\n────────────\n".join(mensagens)
+
+        st.subheader(f"📆 Reservas de {ano_sel} – Mês {mes_sel:02d}")
+        st.text_area("Mensagens geradas:", texto_final, height=500)
+
+        # --------------------------
+        # Botões de cópia (JS)
+        # --------------------------
+        copiar_js = f"""
+        <script>
+        function copiarTexto() {{
+            const texto = `{texto_final}`;
+            navigator.clipboard.writeText(texto).then(() => {{
+                alert("✅ Texto copiado!");
+            }});
+        }}
+        function copiarHoje() {{
+            const hoje = new Date().toLocaleDateString('pt-BR');
+            const linhas = `{texto_final}`.split("────────────");
+            const filtradas = linhas.filter(l => l.includes(hoje.split('/')[0] + '/' + hoje.split('/')[1]));
+            if (filtradas.length > 0) {{
+                navigator.clipboard.writeText(filtradas.join("\\n\\n")).then(() => {{
+                    alert("📅 Texto do dia copiado!");
+                }});
+            }} else {{
+                alert("⚠️ Nenhuma reserva encontrada para hoje!");
+            }}
+        }}
+        </script>
+        <div style="display:flex;gap:10px;">
+            <button onclick="copiarTexto()" style="background-color:#7A5FFF;color:white;border:none;
+                    border-radius:8px;padding:10px 20px;font-weight:bold;cursor:pointer;">
+                📋 Copiar tudo
+            </button>
+            <button onclick="copiarHoje()" style="background-color:#2ECC71;color:white;border:none;
+                    border-radius:8px;padding:10px 20px;font-weight:bold;cursor:pointer;">
+                📅 Copiar só hoje
+            </button>
+        </div>
+        """
+        components.html(copiar_js, height=100)
+
+    # ======================================================
+    # 📘 ABA 3 - PORTFÓLIO MONTESSORI
+    # ======================================================
+    
+    with aba3:
+        st.subheader("📘 Portfólio Montessori TimTim Festas")
+
+        pdf_url = "https://hmrqsjdlixeazdfhrqqh.supabase.co/storage/v1/object/public/portfolio/portifolio_out2025.pdf"
+
+        st.markdown(
+            f'<iframe src="{pdf_url}" width="100%" height="900px" '
+            f'style="border:none;" type="application/pdf"></iframe>',
+            unsafe_allow_html=True
+        )
+
+        st.success("✅ Portfólio carregado diretamente do Supabase!")
+
+
+
+from pathlib import Path
+import unicodedata, re
+from datetime import datetime
+
+def _slugify(s: str) -> str:
+    s = unicodedata.normalize("NFKD", str(s)).encode("ascii", "ignore").decode("ascii")
+    s = re.sub(r"[^\w\s-]", "", s).strip().lower()
+    return re.sub(r"[\s_-]+", "-", s) or "foto"
+
+def _fotos_dir() -> Path:
+    # garante a pasta ao lado do app.py
+    base = Path(__file__).parent if "__file__" in globals() else Path.cwd()
+    d = base / "fotos_funcionarios"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+def salvar_foto_imediato(foto_bytes: bytes, nome_hint: str, ext: str = ".jpg") -> str:
+    """
+    Salva imediatamente a foto em fotos_funcionarios e
+    retorna caminho RELATIVO em formato POSIX (string).
+    """
+    fotos_dir = _fotos_dir()
+    fname = f"{_slugify(nome_hint)}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{ext}"
+    destino = fotos_dir / fname
+    with open(destino, "wb") as f:
+        f.write(foto_bytes)
+    # retorna relativo ao app (portável)
+    rel = destino.relative_to(Path(__file__).parent if "__file__" in globals() else Path.cwd())
+    return rel.as_posix()
 
 
 
