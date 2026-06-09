@@ -3894,229 +3894,194 @@ def pagina_contratos():
     import os
     import pandas as pd
     from datetime import datetime
-    import requests
-    from supabase_rest import table_update
-
+    import subprocess
+<br>
     st.title("📄 Gerar Contratos")
-
+<br>
     caminho_modelo = "modelos/contrato_modelo.docx"
-
+<br>
     if not os.path.exists(caminho_modelo):
         st.error("❌ Modelo não encontrado")
         return
-
+<br>
     # =========================
-    # 📦 DADOS
+    # 📦 CARREGAR DADOS
     # =========================
     reservas = carregar_dados("reservas", [
-        "id","cliente","data",
-        "autentique_id","status_assinatura",
-        "data_envio","data_assinatura","tipo_envio"
+        "id","cliente","brinquedos","data",
+        "horario_entrega","horario_retirada",
+        "valor_total","valor_extra","frete","desconto",
+        "sinal","falta","observacao","status"
     ])
-
+<br>
     clientes = carregar_dados("clientes", [
-        "nome","telefone","email"
+        "nome","cpf","rg","email","telefone",
+        "logradouro","numero","complemento","cidade","cep"
     ])
-
+<br>
+    if reservas.empty:
+        st.warning("Sem reservas")
+        return
+<br>
+    # =========================
+    # 🔽 ESCOLHER RESERVA
+    # =========================
     reservas["label"] = reservas["cliente"] + " - " + reservas["data"].astype(str)
-
+<br>
     reserva_sel = st.selectbox("Selecione a reserva:", reservas["label"])
     reserva = reservas[reservas["label"] == reserva_sel].iloc[0]
-
+<br>
     # =========================
-    # 👤 CLIENTE
+    # 🔎 BUSCAR CLIENTE
     # =========================
     cliente_df = clientes[
-        clientes["nome"].str.lower() == str(reserva["cliente"]).lower()
+        clientes["nome"].str.strip().str.lower() ==
+        str(reserva["cliente"]).strip().lower()
     ]
-
-    cliente = cliente_df.iloc[0] if not cliente_df.empty else {}
-
-    nome_cliente = cliente.get("nome", reserva["cliente"])
-    telefone_cliente = cliente.get("telefone", "")
-
-    # =========================
-    # 👀 EXIBIÇÃO
-    # =========================
-    st.divider()
-    st.subheader("📋 Cliente")
-    st.write(f"👤 {nome_cliente}")
-    st.write(f"📞 {telefone_cliente}")
-
-    # =========================
-    # 🔏 STATUS
-    # =========================
-    st.divider()
-    st.subheader("🔏 Status")
-
-    status = reserva.get("status_assinatura")
-
-    if status == "signed":
-        st.success("✅ Cliente assinou")
+<br>
+    if cliente_df.empty:
+        st.warning("⚠️ Cliente não encontrado")
+        cliente = {}
     else:
-        st.warning("⏳ Aguardando assinatura")
-
+        cliente = cliente_df.iloc[0].to_dict()
+<br>
     # =========================
-    # 📅 INFO
+    # 🏠 MONTAR ENDEREÇO
     # =========================
-    st.markdown("### 📅 Informações")
-
-    if reserva.get("tipo_envio"):
-        st.write(f"📤 Enviado via: {reserva['tipo_envio']}")
-
-    if reserva.get("data_envio"):
-        st.write(f"📤 Data envio: {reserva['data_envio']}")
-
-    if reserva.get("data_assinatura"):
-        st.write(f"✅ Assinado em: {reserva['data_assinatura']}")
-
+    endereco_completo = " - ".join(filter(None, [
+        f"{cliente.get('logradouro','')}, {cliente.get('numero','')}" if cliente.get("logradouro") else "",
+        cliente.get("complemento", ""),
+        cliente.get("cidade", ""),
+        f"CEP: {cliente.get('cep','')}" if cliente.get("cep") else ""
+    ]))
+<br>
     # =========================
-    # 🔗 VINCULAR
+    # 👀 EXIBIR DADOS
     # =========================
     st.divider()
-    st.subheader("🔗 Autentique")
-
-    autentique_id_input = st.text_input(
-        "ID do documento:",
-        value=reserva.get("autentique_id", "") or ""
-    )
-
-    tipo_envio = st.selectbox("Tipo de envio", ["WhatsApp", "Email"])
-
-    def atualizar_campo(campo, valor):
-        table_update("reservas", {"id": reserva["id"]}, {campo: valor})
-
-    if st.button("💾 Salvar vínculo"):
-        atualizar_campo("autentique_id", autentique_id_input)
-        atualizar_campo("tipo_envio", tipo_envio)
-
-        data_envio = datetime.now().strftime("%d/%m/%Y %H:%M")
-        atualizar_campo("data_envio", data_envio)
-
-        st.success("✅ Vínculo salvo")
-
+<br>
+    st.subheader("📋 Dados encontrados")
+    st.write("👤 Cliente:", reserva["cliente"])
+    st.write("📅 Data:", reserva["data"])
+    st.write("🎠 Brinquedos:", reserva["brinquedos"])
+    st.write("🏠 Endereço:", endereco_completo)
+<br>
     # =========================
-    # 🔎 CONSULTAR AUTENTIQUE (FINAL)
+    # 🔧 FUNÇÃO SUBSTITUIR
     # =========================
-    def consultar_status_autentique(document_id):
-
-        url = "https://api.autentique.com.br/v2/graphql"
-
-        headers = {
-            "Authorization": "Bearer 33a23a237913f3e59655aec8ccf698f68d31f2f4d05e8dc32b10ebe645d6b87f",
-            "Content-Type": "application/json"
-        }
-
-        query = {
-            "query": f"""
-            query {{
-                document(id: "{document_id}") {{
-                    signatures {{
-                        action {{
-                            name
-                        }}
-                        created_at
-                    }}
-                }}
-            }}
-            """
-        }
-
-        response = requests.post(url, json=query, headers=headers)
-
-        if response.status_code != 200:
-            st.error(f"Erro HTTP: {response.status_code}")
-            return None
-
-        data = response.json()
-
-        # DEBUG (remover depois)
-        st.write("DEBUG API:", data)
-
-        if "errors" in data:
-            return None
-
-        assinaturas = data.get("data", {}).get("document", {}).get("signatures", [])
-
-        if not assinaturas:
-            return "pending"
-
-        data_envio = reserva.get("data_envio")
-
-        for assinatura in assinaturas:
-
-            acao = assinatura.get("action")
-            data_api = assinatura.get("created_at")
-
-            if acao and acao.get("name") == "SIGN" and data_api and data_envio:
-
-                try:
-                    dt_sign = pd.to_datetime(data_api, utc=True)
-                    dt_envio = pd.to_datetime(data_envio, dayfirst=True)
-
-                    # ✅ REGRA FINAL (CHAVE)
-                    if dt_sign > dt_envio:
-
-                        dt_local = dt_sign.tz_convert("America/Sao_Paulo")
-                        data_formatada = dt_local.strftime("%d/%m/%Y %H:%M")
-
-                        if not reserva.get("data_assinatura"):
-                            atualizar_campo("data_assinatura", data_formatada)
-
-                        return "signed"
-
-                except:
-                    pass
-
-        return "pending"
-
-    # =========================
-    # 🔄 ATUALIZAR STATUS
-    # =========================
-    if reserva.get("autentique_id"):
-        if st.button("🔄 Atualizar status"):
-
-            status_api = consultar_status_autentique(reserva["autentique_id"])
-
-            if status_api:
-                atualizar_campo("status_assinatura", status_api)
-
-                if status_api == "signed":
-                    st.success("✅ Cliente assinou (confirmado)")
-                else:
-                    st.warning("⏳ Cliente ainda não assinou")
-            else:
-                st.error("❌ Erro ao consultar Autentique")
-
+    def substituir_tudo(doc, chave, valor):
+        valor = str(valor) if valor is not None else ""
+<br>
+        for p in doc.paragraphs:
+            if chave in p.text:
+                p.text = p.text.replace(chave, valor)
+<br>
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    if chave in cell.text:
+                        cell.text = cell.text.replace(chave, valor)
+<br>
     # =========================
     # 📄 GERAR CONTRATO
     # =========================
     if st.button("📄 Gerar contrato"):
-
+<br>
         try:
             doc = Document(caminho_modelo)
-
-            substituir = {
-                "{{cliente_nome}}": nome_cliente,
-                "{{telefone}}": telefone_cliente,
-                "{{data_evento}}": str(reserva["data"])
-            }
-
-            for p in doc.paragraphs:
-                for chave, valor in substituir.items():
-                    if chave in p.text:
-                        p.text = p.text.replace(chave, valor)
-
-            nome_docx = f"contrato_{nome_cliente.replace(' ', '_')}.docx"
+<br>
+            # =========================
+            # 🗓️ DATA ATUAL
+            # =========================
+            data_atual = datetime.now()
+            dia = data_atual.strftime("%d")
+            mes = data_atual.strftime("%B").capitalize()
+            ano = data_atual.strftime("%Y")
+<br>
+            # =========================
+            # 💰 VALORES
+            # =========================
+            valor_total = reserva["valor_total"]
+            entrada = reserva["sinal"]
+            restante = reserva["falta"]
+<br>
+            # =========================
+            # 🔁 CLIENTE
+            # =========================
+            substituir_tudo(doc, "{{cliente_nome}}", reserva["cliente"])
+            substituir_tudo(doc, "{{cliente_cpf}}", cliente.get("cpf", ""))
+            substituir_tudo(doc, "{{cliente_rg}}", cliente.get("rg", ""))
+            substituir_tudo(doc, "{{cliente_email}}", cliente.get("email", ""))
+            substituir_tudo(doc, "{{cliente_telefone}}", cliente.get("telefone", ""))
+            substituir_tudo(doc, "{{endereco}}", endereco_completo)
+<br>
+            # =========================
+            # 🔁 EVENTO
+            # =========================
+            substituir_tudo(
+                doc,
+                "{{data_evento}}",
+                pd.to_datetime(reserva["data"]).strftime("%d/%m/%Y")
+            )
+<br>
+            substituir_tudo(doc, "{{hora_entrega}}", reserva["horario_entrega"])
+            substituir_tudo(doc, "{{hora_retirada}}", reserva["horario_retirada"])
+            substituir_tudo(doc, "{{lista_brinquedos}}", reserva["brinquedos"])
+<br>
+            # =========================
+            # 🔁 DATA CONTRATO
+            # =========================
+            substituir_tudo(doc, "{{dia}}", dia)
+            substituir_tudo(doc, "{{mes}}", mes)
+            substituir_tudo(doc, "{{ano}}", ano)
+<br>
+            # =========================
+            # 🔁 VALORES
+            # =========================
+            substituir_tudo(doc, "{{valor_total}}", f"{valor_total:,.2f}")
+            substituir_tudo(doc, "{{valor_entrada}}", f"{entrada:,.2f}")
+            substituir_tudo(doc, "{{valor_restante}}", f"{restante:,.2f}")
+<br>
+            # =========================
+            # 💾 SALVAR DOCX
+            # =========================
+            nome_docx = f"contrato_{reserva['cliente'].replace(' ', '_')}.docx"
             doc.save(nome_docx)
-
+<br>
+            st.success("✅ Contrato Word gerado!")
+<br>
             with open(nome_docx, "rb") as f:
-                st.download_button("⬇️ Baixar contrato", f, file_name=nome_docx)
-
-            st.success("✅ Contrato gerado")
-
+                st.download_button("⬇️ Baixar Word", f, file_name=nome_docx)
+<br>
+            # =========================
+            # 📄 BOTÃO GERAR PDF
+            # =========================
+            def converter_para_pdf(nome_docx):
+                try:
+                    subprocess.run([
+                        "libreoffice",
+                        "--headless",
+                        "--convert-to",
+                        "pdf",
+                        nome_docx
+                    ])
+                    return nome_docx.replace(".docx", ".pdf")
+                except:
+                    return None
+<br>
+            if st.button("📄 Gerar PDF"):
+<br>
+                pdf = converter_para_pdf(nome_docx)
+<br>
+                if pdf and os.path.exists(pdf):
+                    with open(pdf, "rb") as f:
+                        st.download_button("⬇️ Baixar PDF", f, file_name=pdf)
+                    st.success("✅ PDF gerado com sucesso!")
+                else:
+                    st.warning("⚠️ Não foi possível gerar o PDF no servidor")
+<br>
         except Exception as e:
-            st.error(f"Erro: {e}")
+            st.error(f"❌ Erro: {e}")
 
 
 # ========================================
