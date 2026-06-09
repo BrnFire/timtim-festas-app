@@ -3911,7 +3911,8 @@ def pagina_contratos():
         "id","cliente","brinquedos","data",
         "horario_entrega","horario_retirada",
         "valor_total","valor_extra","frete","desconto",
-        "sinal","falta","observacao","status"
+        "sinal","falta","observacao","status",
+        "autentique_id","status_assinatura"  # ✅ NOVOS CAMPOS
     ])
 
     clientes = carregar_dados("clientes", [
@@ -3965,6 +3966,25 @@ def pagina_contratos():
     st.write("📅 Data:", reserva["data"])
     st.write("🎠 Brinquedos:", reserva["brinquedos"])
     st.write("🏠 Endereço:", endereco_completo)
+
+    # =========================
+    # 🔏 STATUS ASSINATURA
+    # =========================
+    st.divider()
+    st.subheader("🔏 Status da Assinatura")
+
+    status = reserva.get("status_assinatura")
+
+    if status == "pending":
+        st.warning("🟡 Aguardando assinatura")
+    elif status == "signed":
+        st.success("✅ Contrato assinado")
+    elif status == "rejected":
+        st.error("❌ Assinatura recusada")
+    elif status == "expired":
+        st.error("⏰ Documento expirado")
+    else:
+        st.info("ℹ️ Contrato ainda não enviado para assinatura")
 
     # =========================
     # 🔧 FUNÇÃO SUBSTITUIR
@@ -4082,24 +4102,6 @@ def pagina_contratos():
 
         except Exception as e:
             st.error(f"❌ Erro: {e}")
-
-
-
-        st.divider()
-        st.subheader("🔏 Status da Assinatura")
-
-        status = reserva.get("status_assinatura")
-
-        if status == "pending":
-            st.warning("🟡 Aguardando assinatura")
-        elif status == "signed":
-            st.success("✅ Contrato assinado")
-        elif status == "rejected":
-            st.error("❌ Assinatura recusada")
-        elif status == "expired":
-            st.error("⏰ Documento expirado")
-        else:
-            st.info("ℹ️ Contrato ainda não enviado para assinatura")
 
 
 # ========================================
