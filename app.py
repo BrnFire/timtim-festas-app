@@ -4024,10 +4024,17 @@ def pagina_contratos():
             query {{
                 document(id: "{document_id}") {{
                     id
-                    status
+                    name           
+                    signatures {{
+                        name
+                        email
+                        action {{
+                            name
+                        }}
+
                 }}
             }}
-            """
+            
         }
 
         response = requests.post(url, json=query, headers=headers)
