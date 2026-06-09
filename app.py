@@ -3888,6 +3888,7 @@ def pagina_funcionarios():
 # MÓDULO: CONTRATOS
 # =========================================
 
+
 def pagina_contratos():
     import streamlit as st
     from docx import Document
@@ -3895,6 +3896,7 @@ def pagina_contratos():
     import pandas as pd
     from datetime import datetime
     import subprocess
+    import requests
 
     st.title("📄 Gerar Contratos")
 
@@ -3912,7 +3914,7 @@ def pagina_contratos():
         "horario_entrega","horario_retirada",
         "valor_total","valor_extra","frete","desconto",
         "sinal","falta","observacao","status",
-        "autentique_id","status_assinatura"  # ✅ NOVOS CAMPOS
+        "autentique_id","status_assinatura"
     ])
 
     clientes = carregar_dados("clientes", [
@@ -3924,30 +3926,23 @@ def pagina_contratos():
         st.warning("Sem reservas")
         return
 
-    # =========================
-    # 🔽 ESCOLHER RESERVA
-    # =========================
     reservas["label"] = reservas["cliente"] + " - " + reservas["data"].astype(str)
 
     reserva_sel = st.selectbox("Selecione a reserva:", reservas["label"])
     reserva = reservas[reservas["label"] == reserva_sel].iloc[0]
 
     # =========================
-    # 🔎 BUSCAR CLIENTE
+    # 🔎 CLIENTE
     # =========================
     cliente_df = clientes[
         clientes["nome"].str.strip().str.lower() ==
         str(reserva["cliente"]).strip().lower()
     ]
 
-    if cliente_df.empty:
-        st.warning("⚠️ Cliente não encontrado")
-        cliente = {}
-    else:
-        cliente = cliente_df.iloc[0].to_dict()
+    cliente = cliente_df.iloc[0].to_dict() if not cliente_df.empty else {}
 
     # =========================
-    # 🏠 MONTAR ENDEREÇO
+    # 🏠 ENDEREÇO
     # =========================
     endereco_completo = " - ".join(filter(None, [
         f"{cliente.get('logradouro','')}, {cliente.get('numero','')}" if cliente.get("logradouro") else "",
@@ -3957,10 +3952,9 @@ def pagina_contratos():
     ]))
 
     # =========================
-    # 👀 EXIBIR DADOS
+    # 👀 EXIBIÇÃO
     # =========================
     st.divider()
-
     st.subheader("📋 Dados encontrados")
     st.write("👤 Cliente:", reserva["cliente"])
     st.write("📅 Data:", reserva["data"])
@@ -3968,7 +3962,7 @@ def pagina_contratos():
     st.write("🏠 Endereço:", endereco_completo)
 
     # =========================
-    # 🔏 STATUS ASSINATURA
+    # 🔏 STATUS
     # =========================
     st.divider()
     st.subheader("🔏 Status da Assinatura")
@@ -3987,7 +3981,62 @@ def pagina_contratos():
         st.info("ℹ️ Contrato ainda não enviado para assinatura")
 
     # =========================
-    # 🔧 FUNÇÃO SUBSTITUIR
+    # 🔗 VINCULAR AUTENTIQUE
+    # =========================
+    st.divider()
+    st.subheader("🔗 Vincular com Autentique")
+
+    autentique_id_input = st.text_input(
+        "Cole o ID do documento:",
+        value=reserva.get("autentique_id", "") or ""
+    )
+
+    if st.button("💾 Salvar ID"):
+        atualizar_campo("reservas", "autentique_id", autentique_id_input, reserva["id"])
+        st.success("✅ ID salvo! Recarregue a página.")
+
+    # =========================
+    # 🔎 CONSULTAR API
+    # =========================
+    def consultar_status_autentique(document_id):
+        url = "https://api.autentique.com.br/v2/graphql"
+
+        headers = {
+            "Authorization": "Bearer SEU_TOKEN_AQUI",
+            "Content-Type": "application/json"
+        }
+
+        query = {
+            "query": f'''
+            query {{
+                document(id: "{document_id}") {{
+                    id
+                    status
+                }}
+            }}
+            '''
+        }
+
+        response = requests.post(url, json=query, headers=headers)
+
+        if response.status_code == 200:
+            data = response.json()
+            return data["data"]["document"]["status"]
+        else:
+            return None
+
+    if reserva.get("autentique_id"):
+        if st.button("🔄 Atualizar status"):
+            status_api = consultar_status_autentique(reserva["autentique_id"])
+
+            if status_api:
+                atualizar_campo("reservas", "status_assinatura", status_api, reserva["id"])
+                st.success(f"✅ Status atualizado: {status_api}")
+            else:
+                st.error("❌ Erro ao consultar")
+
+    # =========================
+    # 🔧 SUBSTITUIR TEXTO
     # =========================
     def substituir_tudo(doc, chave, valor):
         valor = str(valor) if valor is not None else ""
@@ -4010,24 +4059,15 @@ def pagina_contratos():
         try:
             doc = Document(caminho_modelo)
 
-            # =========================
-            # 🗓️ DATA ATUAL
-            # =========================
             data_atual = datetime.now()
             dia = data_atual.strftime("%d")
             mes = data_atual.strftime("%B").capitalize()
             ano = data_atual.strftime("%Y")
 
-            # =========================
-            # 💰 VALORES
-            # =========================
             valor_total = reserva["valor_total"]
             entrada = reserva["sinal"]
             restante = reserva["falta"]
 
-            # =========================
-            # 🔁 CLIENTE
-            # =========================
             substituir_tudo(doc, "{{cliente_nome}}", reserva["cliente"])
             substituir_tudo(doc, "{{cliente_cpf}}", cliente.get("cpf", ""))
             substituir_tudo(doc, "{{cliente_rg}}", cliente.get("rg", ""))
@@ -4035,9 +4075,6 @@ def pagina_contratos():
             substituir_tudo(doc, "{{cliente_telefone}}", cliente.get("telefone", ""))
             substituir_tudo(doc, "{{endereco}}", endereco_completo)
 
-            # =========================
-            # 🔁 EVENTO
-            # =========================
             substituir_tudo(
                 doc,
                 "{{data_evento}}",
@@ -4048,34 +4085,22 @@ def pagina_contratos():
             substituir_tudo(doc, "{{hora_retirada}}", reserva["horario_retirada"])
             substituir_tudo(doc, "{{lista_brinquedos}}", reserva["brinquedos"])
 
-            # =========================
-            # 🔁 DATA CONTRATO
-            # =========================
             substituir_tudo(doc, "{{dia}}", dia)
             substituir_tudo(doc, "{{mes}}", mes)
             substituir_tudo(doc, "{{ano}}", ano)
 
-            # =========================
-            # 🔁 VALORES
-            # =========================
             substituir_tudo(doc, "{{valor_total}}", f"{valor_total:,.2f}")
             substituir_tudo(doc, "{{valor_entrada}}", f"{entrada:,.2f}")
             substituir_tudo(doc, "{{valor_restante}}", f"{restante:,.2f}")
 
-            # =========================
-            # 💾 SALVAR DOCX
-            # =========================
             nome_docx = f"contrato_{reserva['cliente'].replace(' ', '_')}.docx"
             doc.save(nome_docx)
 
-            st.success("✅ Contrato Word gerado!")
+            st.success("✅ Word gerado!")
 
             with open(nome_docx, "rb") as f:
                 st.download_button("⬇️ Baixar Word", f, file_name=nome_docx)
 
-            # =========================
-            # 📄 BOTÃO GERAR PDF
-            # =========================
             def converter_para_pdf(nome_docx):
                 try:
                     subprocess.run([
@@ -4096,9 +4121,9 @@ def pagina_contratos():
                 if pdf and os.path.exists(pdf):
                     with open(pdf, "rb") as f:
                         st.download_button("⬇️ Baixar PDF", f, file_name=pdf)
-                    st.success("✅ PDF gerado com sucesso!")
+                    st.success("✅ PDF gerado!")
                 else:
-                    st.warning("⚠️ Não foi possível gerar o PDF no servidor")
+                    st.warning("⚠️ Erro ao gerar PDF")
 
         except Exception as e:
             st.error(f"❌ Erro: {e}")
