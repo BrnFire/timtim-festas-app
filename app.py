@@ -3888,15 +3888,11 @@ def pagina_funcionarios():
 # MÓDULO: CONTRATOS
 # =========================================
 
-
 def pagina_contratos():
     import streamlit as st
     from docx import Document
     import os
     import pandas as pd
-    from datetime import datetime
-    import requests
-    from supabase_rest import table_update
 
     st.title("📄 Gerar Contratos")
 
@@ -3910,9 +3906,16 @@ def pagina_contratos():
     # 📦 DADOS
     # =========================
     reservas = carregar_dados("reservas", [
-        "id","cliente","data",
-        "autentique_id","status_assinatura"
+        "id", "cliente", "data"
     ])
+
+    clientes = carregar_dados("clientes", [
+        "nome", "telefone"
+    ])
+
+    if reservas.empty:
+        st.warning("⚠️ Nenhuma reserva encontrada")
+        return
 
     reservas["label"] = reservas["cliente"] + " - " + reservas["data"].astype(str)
 
@@ -3920,107 +3923,26 @@ def pagina_contratos():
     reserva = reservas[reservas["label"] == reserva_sel].iloc[0]
 
     # =========================
-    # 🔏 STATUS
+    # 🔎 CLIENTE
+    # =========================
+    cliente_df = clientes[
+        clientes["nome"].str.lower() == str(reserva["cliente"]).lower()
+    ]
+
+    cliente = cliente_df.iloc[0] if not cliente_df.empty else {}
+
+    nome_cliente = cliente.get("nome", reserva["cliente"])
+    telefone_cliente = cliente.get("telefone", "")
+
+    # =========================
+    # 👀 EXIBIÇÃO
     # =========================
     st.divider()
-    st.subheader("🔏 Status da Assinatura")
+    st.subheader("📋 Dados")
 
-    status = reserva.get("status_assinatura")
-
-    if status == "signed":
-        st.success("✅ Contrato assinado")
-    elif status == "pending":
-        st.warning("⏳ Aguardando assinatura")
-    else:
-        st.info("ℹ️ Não enviado")
-
-    # =========================
-    # 🔗 AUTENTIQUE
-    # =========================
-    st.divider()
-    st.subheader("🔗 Autentique")
-
-    autentique_id_input = st.text_input(
-        "ID do documento:",
-        value=reserva.get("autentique_id", "") or ""
-    )
-
-    def atualizar_campo(campo, valor):
-        table_update(
-            "reservas",
-            {"id": reserva["id"]},
-            {campo: valor}
-        )
-
-    if st.button("💾 Salvar ID"):
-        atualizar_campo("autentique_id", autentique_id_input)
-        st.success("✅ ID salvo")
-
-    # =========================
-    # 🔎 CONSULTAR AUTENTIQUE (VERSÃO SIMPLES INICIAL)
-    # =========================
-    def consultar_status_autentique(document_id):
-
-        url = "https://api.autentique.com.br/v2/graphql"
-
-        headers = {
-            "Authorization": "Bearer SEU_TOKEN_AQUI",
-            "Content-Type": "application/json"
-        }
-
-        query = {
-            "query": f"""
-            query {{
-                document(id: "{document_id}") {{
-                    signatures {{
-                        action {{
-                            name
-                        }}
-                    }}
-                }}
-            }}
-            """
-        }
-
-        response = requests.post(url, json=query, headers=headers)
-
-        if response.status_code != 200:
-            return None
-
-        data = response.json()
-
-        if "errors" in data:
-            return None
-
-        assinaturas = data.get("data", {}).get("document", {}).get("signatures", [])
-
-        # ✅ LÓGICA ORIGINAL SIMPLES
-        for s in assinaturas:
-            acao = s.get("action")
-
-            if acao and acao.get("name") == "SIGN":
-                return "signed"
-
-        return "pending"
-
-    # =========================
-    # 🔄 ATUALIZAR STATUS
-    # =========================
-    if reserva.get("autentique_id"):
-        if st.button("🔄 Atualizar status"):
-
-            status_api = consultar_status_autentique(reserva["autentique_id"])
-
-            if status_api:
-                atualizar_campo("status_assinatura", status_api)
-
-                if status_api == "signed":
-                    st.success("✅ Status atualizado: assinado")
-                else:
-                    st.warning("⏳ Status atualizado: pendente")
-
-            else:
-                st.error("❌ Não foi possível obter status")
+    st.write(f"👤 Cliente: {nome_cliente}")
+    st.write(f"📞 Telefone: {telefone_cliente}")
+    st.write(f"📅 Data: {reserva['data']}")
 
     # =========================
     # 📄 GERAR CONTRATO
@@ -4030,16 +3952,32 @@ def pagina_contratos():
         try:
             doc = Document(caminho_modelo)
 
-            nome_docx = f"contrato_{reserva['cliente'].replace(' ', '_')}.docx"
+            substituir = {
+                "{{cliente_nome}}": nome_cliente,
+                "{{telefone}}": telefone_cliente,
+                "{{data_evento}}": str(reserva["data"])
+            }
+
+            for p in doc.paragraphs:
+                for chave, valor in substituir.items():
+                    if chave in p.text:
+                        p.text = p.text.replace(chave, valor)
+
+            nome_docx = f"contrato_{nome_cliente.replace(' ', '_')}.docx"
             doc.save(nome_docx)
 
             with open(nome_docx, "rb") as f:
-                st.download_button("⬇️ Baixar contrato", f, file_name=nome_docx)
+                st.download_button(
+                    "⬇️ Baixar contrato",
+                    f,
+                    file_name=nome_docx
+                )
 
-            st.success("✅ Contrato gerado")
+            st.success("✅ Contrato gerado com sucesso")
 
         except Exception as e:
-            st.error(f"Erro: {e}")
+            st.error(f"Erro ao gerar contrato: {e}")
+
 
 # ========================================
 # PAGINA CONTRATO FIM
