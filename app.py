@@ -3923,7 +3923,7 @@ def pagina_contratos():
     reserva = reservas[reservas["label"] == reserva_sel].iloc[0]
 
     # =========================
-    # 🔎 CLIENTE (DADOS INTERNOS)
+    # 🔎 CLIENTE INTERNO
     # =========================
     cliente_df = clientes[
         clientes["nome"].str.lower() == str(reserva["cliente"]).lower()
@@ -3959,7 +3959,7 @@ def pagina_contratos():
         st.info("ℹ️ Não enviado")
 
     # =========================
-    # 📅 INFORMAÇÕES
+    # 📅 INFO
     # =========================
     st.markdown("### 📅 Informações")
 
@@ -4052,25 +4052,29 @@ def pagina_contratos():
         ]
 
         if not assinaturas_cliente:
-            return None
+            return "pending"
 
-        assinatura = assinaturas_cliente[0]
+        # 🔥 VERIFICA TODAS (importante!)
+        for assinatura in assinaturas_cliente:
 
-        acao = assinatura.get("action")
-        data_api = assinatura.get("created_at")
+            acao = assinatura.get("action")
 
-        # ✅ CORREÇÃO CRÍTICA
-        if acao and acao.get("name") in ["SIGN", "SIGNED"]:
-            status = "signed"
+            # ✅ REGRA DEFINITIVA
+            if acao is not None and acao.get("name") == "SIGN":
 
-            # salva data real (API)
-            if data_api:
-                data_formatada = pd.to_datetime(data_api).strftime("%d/%m/%Y %H:%M")
-                atualizar_campo("data_assinatura", data_formatada)
-        else:
-            status = "pending"
+                data_api = assinatura.get("created_at")
 
-        return status
+                # salvar data real (apenas uma vez)
+                if data_api and not reserva.get("data_assinatura"):
+
+                    dt = pd.to_datetime(data_api, utc=True).tz_convert("America/Sao_Paulo")
+                    data_formatada = dt.strftime("%d/%m/%Y %H:%M")
+
+                    atualizar_campo("data_assinatura", data_formatada)
+
+                return "signed"
+
+        return "pending"
 
     # =========================
     # 🔄 ATUALIZAR STATUS
@@ -4084,12 +4088,12 @@ def pagina_contratos():
                 atualizar_campo("status_assinatura", status_api)
 
                 if status_api == "signed":
-                    st.success("✅ Cliente assinou (confirmado pela API)")
+                    st.success("✅ Cliente assinou (confirmado)")
                 else:
                     st.warning("⏳ Cliente ainda não assinou")
 
             else:
-                st.error("❌ Não foi possível consultar o Autentique")
+                st.error("❌ Erro ao consultar API")
 
     # =========================
     # 📄 GERAR CONTRATO
@@ -4116,10 +4120,10 @@ def pagina_contratos():
             with open(nome_docx, "rb") as f:
                 st.download_button("⬇️ Baixar contrato", f, file_name=nome_docx)
 
-            st.success("✅ Contrato gerado")
+            st.success("✅ Contrato gerado com sucesso")
 
         except Exception as e:
-            st.error(f"Erro ao gerar contrato: {e}")
+            st.error(f"Erro: {e}")
 
 
 
