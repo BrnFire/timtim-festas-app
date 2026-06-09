@@ -3914,7 +3914,8 @@ def pagina_contratos():
         "horario_entrega","horario_retirada",
         "valor_total","valor_extra","frete","desconto",
         "sinal","falta","observacao","status",
-        "autentique_id","status_assinatura"
+        "autentique_id","status_assinatura",
+        "data_envio","data_assinatura"
     ])
 
     clientes = carregar_dados("clientes", [
@@ -3938,7 +3939,6 @@ def pagina_contratos():
         clientes["nome"].str.strip().str.lower() ==
         str(reserva["cliente"]).strip().lower()
     ]
-
     cliente = cliente_df.iloc[0].to_dict() if not cliente_df.empty else {}
 
     # =========================
@@ -3952,7 +3952,7 @@ def pagina_contratos():
     ]))
 
     # =========================
-    # 👀 EXIBIR DADOS
+    # 👀 DADOS
     # =========================
     st.divider()
     st.subheader("📋 Dados encontrados")
@@ -3962,37 +3962,45 @@ def pagina_contratos():
     st.write("🏠 Endereço:", endereco_completo)
 
     # =========================
-    # 🔏 STATUS ASSINATURA
+    # 🔏 STATUS
     # =========================
     st.divider()
     st.subheader("🔏 Status da Assinatura")
 
     status = reserva.get("status_assinatura")
 
-    if status == "pending":
-        st.warning("🟡 Aguardando assinatura")
-    elif status == "signed":
+    if status == "signed":
         st.success("✅ Contrato assinado")
-    elif status == "rejected":
-        st.error("❌ Assinatura recusada")
-    elif status == "expired":
-        st.error("⏰ Documento expirado")
+    elif status == "partial":
+        st.warning("🟡 Assinatura parcial")
+    elif status == "pending":
+        st.warning("⏳ Aguardando assinatura")
     else:
-        st.info("ℹ️ Contrato ainda não enviado para assinatura")
+        st.info("ℹ️ Não enviado")
 
     # =========================
-    # 🔗 VINCULAR AUTENTIQUE
+    # 📅 DATAS
+    # =========================
+    st.markdown("### 📅 Datas")
+
+    if reserva.get("data_envio"):
+        st.write(f"📤 Enviado: {reserva['data_envio']}")
+
+    if reserva.get("data_assinatura"):
+        st.write(f"✅ Assinado em: {reserva['data_assinatura']}")
+
+    # =========================
+    # 🔗 VINCULAR
     # =========================
     st.divider()
-    st.subheader("🔗 Vincular com Autentique")
+    st.subheader("🔗 Vincular Autentique")
 
     autentique_id_input = st.text_input(
-        "Cole o ID do documento:",
+        "ID do documento:",
         value=reserva.get("autentique_id", "") or ""
     )
 
-    # 👉 FUNÇÃO DE UPDATE (USA SEU SUPABASE)
-    def atualizar_campo(tabela, campo, valor, id_registro):
+    def atualizar_campo(campo, valor):
         from supabase import create_client
 
         url = "https://hmrqsjdlixeazdfhrqqh.supabase.co"
@@ -4000,18 +4008,24 @@ def pagina_contratos():
 
         supabase = create_client(url, key)
 
-        supabase.table(tabela).update({
+        supabase.table("reservas").update({
             campo: valor
-        }).eq("id", id_registro).execute()
+        }).eq("id", reserva["id"]).execute()
 
     if st.button("💾 Salvar ID"):
-        atualizar_campo("reservas", "autentique_id", autentique_id_input, reserva["id"])
-        st.success("✅ ID salvo! Recarregue a página.")
+        atualizar_campo("autentique_id", autentique_id_input)
+
+        # ✅ salva data envio automaticamente
+        data_envio = datetime.now().strftime("%d/%m/%Y %H:%M")
+        atualizar_campo("data_envio", data_envio)
+
+        st.success("✅ ID salvo e data registrada!")
 
     # =========================
     # 🔎 CONSULTAR AUTENTIQUE
     # =========================
     def consultar_status_autentique(document_id):
+
         url = "https://api.autentique.com.br/v2/graphql"
 
         headers = {
@@ -4023,28 +4037,19 @@ def pagina_contratos():
             "query": f"""
             query {{
                 document(id: "{document_id}") {{
-                    id
-                    name           
                     signatures {{
                         name
                         email
                         action {{
                             name
                         }}
-                        
                     }}
-
                 }}
             }}
-            
             """
         }
 
         response = requests.post(url, json=query, headers=headers)
-
-        # DEBUG
-        print("STATUS HTTP:", response.status_code)
-        st.error(response.text)
 
         if response.status_code != 200:
             return None
@@ -4052,27 +4057,88 @@ def pagina_contratos():
         data = response.json()
 
         if "errors" in data:
-            print("Erro API:", data["errors"])
             return None
 
-        if not data.get("data") or not data["data"]["document"]:
-            print("Documento não encontrado")
+        doc = data.get("data", {}).get("document")
+
+        if not doc:
             return None
 
-        return data["data"]["document"]["status"]
+        assinaturas = doc.get("signatures", [])
 
-    if reserva.get("autentique_id"):
-        if st.button("🔄 Atualizar status"):
-            status_api = consultar_status_autentique(reserva["autentique_id"])
+        total = len(assinaturas)
+        assinados = 0
 
-            if status_api:
-                atualizar_campo("reservas", "status_assinatura", status_api, reserva["id"])
-                st.success(f"✅ Status atualizado: {status_api}")
+        detalhes = []
+
+        for s in assinaturas:
+            nome = s.get("name") or s.get("email")
+            acao = s.get("action")
+
+            if acao and acao.get("name") == "SIGN":
+                assinados += 1
+                detalhes.append(f"✅ {nome}")
             else:
-                st.error("❌ Não foi possível obter status (ver logs)")
+                detalhes.append(f"⏳ {nome}")
+
+        if assinados == total:
+            status = "signed"
+
+            # ✅ SALVAR DATA DE ASSINATURA
+            data_assinatura = datetime.now().strftime("%d/%m/%Y %H:%M")
+            atualizar_campo("data_assinatura", data_assinatura)
+
+        elif assinados > 0:
+            status = "partial"
+        else:
+            status = "pending"
+
+        return {
+            "status": status,
+            "assinados": assinados,
+            "total": total,
+            "pendentes": total - assinados,
+            "detalhes": detalhes
+        }
 
     # =========================
-    # 🔧 SUBSTITUIR TEXTO
+    # 🔄 ATUALIZAR STATUS
+    # =========================
+    if reserva.get("autentique_id"):
+        if st.button("🔄 Atualizar status"):
+
+            resultado = consultar_status_autentique(reserva["autentique_id"])
+
+            if resultado:
+
+                atualizar_campo("status_assinatura", resultado["status"])
+
+                # ✅ STATUS
+                if resultado["status"] == "signed":
+                    st.success("✅ Contrato 100% assinado")
+                elif resultado["status"] == "partial":
+                    st.warning("🟡 Parcialmente assinado")
+                else:
+                    st.warning("⏳ Aguardando")
+
+                # ✅ PROGRESSO
+                st.markdown("### 📊 Progresso")
+                st.write(f"✅ {resultado['assinados']} assinado(s)")
+                st.write(f"⏳ {resultado['pendentes']} pendente(s)")
+                st.write(f"📦 {resultado['total']} total")
+
+                st.progress(resultado["assinados"] / resultado["total"])
+
+                # ✅ DETALHES
+                st.markdown("### 👥 Assinaturas")
+                for d in resultado["detalhes"]:
+                    st.write(d)
+
+            else:
+                st.error("❌ Não foi possível obter status")
+
+    # =========================
+    # 📄 GERAR CONTRATO (SEU ORIGINAL)
     # =========================
     def substituir_tudo(doc, chave, valor):
         valor = str(valor) if valor is not None else ""
@@ -4087,9 +4153,6 @@ def pagina_contratos():
                     if chave in cell.text:
                         cell.text = cell.text.replace(chave, valor)
 
-    # =========================
-    # 📄 GERAR CONTRATO
-    # =========================
     if st.button("📄 Gerar contrato"):
 
         try:
@@ -4100,68 +4163,21 @@ def pagina_contratos():
             mes = data_atual.strftime("%B").capitalize()
             ano = data_atual.strftime("%Y")
 
-            valor_total = reserva["valor_total"]
-            entrada = reserva["sinal"]
-            restante = reserva["falta"]
-
             substituir_tudo(doc, "{{cliente_nome}}", reserva["cliente"])
-            substituir_tudo(doc, "{{cliente_cpf}}", cliente.get("cpf", ""))
-            substituir_tudo(doc, "{{cliente_rg}}", cliente.get("rg", ""))
-            substituir_tudo(doc, "{{cliente_email}}", cliente.get("email", ""))
-            substituir_tudo(doc, "{{cliente_telefone}}", cliente.get("telefone", ""))
             substituir_tudo(doc, "{{endereco}}", endereco_completo)
-
-            substituir_tudo(
-                doc,
-                "{{data_evento}}",
-                pd.to_datetime(reserva["data"]).strftime("%d/%m/%Y")
-            )
-
-            substituir_tudo(doc, "{{hora_entrega}}", reserva["horario_entrega"])
-            substituir_tudo(doc, "{{hora_retirada}}", reserva["horario_retirada"])
-            substituir_tudo(doc, "{{lista_brinquedos}}", reserva["brinquedos"])
 
             substituir_tudo(doc, "{{dia}}", dia)
             substituir_tudo(doc, "{{mes}}", mes)
             substituir_tudo(doc, "{{ano}}", ano)
 
-            substituir_tudo(doc, "{{valor_total}}", f"{valor_total:,.2f}")
-            substituir_tudo(doc, "{{valor_entrada}}", f"{entrada:,.2f}")
-            substituir_tudo(doc, "{{valor_restante}}", f"{restante:,.2f}")
-
             nome_docx = f"contrato_{reserva['cliente'].replace(' ', '_')}.docx"
             doc.save(nome_docx)
-
-            st.success("✅ Word gerado!")
 
             with open(nome_docx, "rb") as f:
                 st.download_button("⬇️ Baixar Word", f, file_name=nome_docx)
 
-            def converter_para_pdf(nome_docx):
-                try:
-                    subprocess.run([
-                        "libreoffice",
-                        "--headless",
-                        "--convert-to",
-                        "pdf",
-                        nome_docx
-                    ])
-                    return nome_docx.replace(".docx", ".pdf")
-                except:
-                    return None
-
-            if st.button("📄 Gerar PDF"):
-                pdf = converter_para_pdf(nome_docx)
-
-                if pdf and os.path.exists(pdf):
-                    with open(pdf, "rb") as f:
-                        st.download_button("⬇️ Baixar PDF", f, file_name=pdf)
-                    st.success("✅ PDF gerado!")
-                else:
-                    st.warning("⚠️ Erro ao gerar PDF")
-
         except Exception as e:
-            st.error(f"❌ Erro: {e}")
+            st.error(f"Erro: {e}")
 
 
 # ========================================
