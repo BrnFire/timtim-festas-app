@@ -3215,15 +3215,13 @@ def pagina_whatsapp():
 
     st.subheader("📘 Portfólio Montessori TimTim Festas")
 
-    # ✅ URL correta (SEM HTML)
+    # ✅ URL correta
     pdf_url = "https://hmrqsjdlixeazdfhrqqh.supabase.co/storage/v1/object/public/portfolio/portifolio_out2025.pdf"
 
-    # ✅ botão sempre funciona (backup)
+    # ✅ botão sempre funciona
     st.link_button("📥 Abrir portfólio em nova aba", pdf_url)
 
-    # =========================
-    # 📄 EXIBIÇÃO DO PDF
-    # =========================
+    # ✅ PDF dentro da página
     try:
         st.components.v1.iframe(
             pdf_url,
