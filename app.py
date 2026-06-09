@@ -4023,7 +4023,7 @@ def pagina_contratos():
 
 
         print("STATUS HTTP:", response.status_code)
-        print("RESPOSTA COMPLETA:", re
+        print("RESPOSTA COMPLETA:", response.text)
 
         
         if response.status_code == 200:
