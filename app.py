@@ -3211,27 +3211,27 @@ def pagina_whatsapp():
     # ======================================================
 
     with aba3:
-    import streamlit as st
+        import streamlit as st
 
-    st.subheader("📘 Portfólio Montessori TimTim Festas")
+        st.subheader("📘 Portfólio Montessori TimTim Festas")
 
-    # ✅ URL correta
-    pdf_url = "https://hmrqsjdlixeazdfhrqqh.supabase.co/storage/v1/object/public/portfolio/portifolio_out2025.pdf"
+        # ✅ URL correta
+        pdf_url = "https://hmrqsjdlixeazdfhrqqh.supabase.co/storage/v1/object/public/portfolio/portifolio_out2025.pdf"
 
-    # ✅ botão sempre funciona
-    st.link_button("📥 Abrir portfólio em nova aba", pdf_url)
+        # ✅ botão sempre funciona
+        st.link_button("📥 Abrir portfólio em nova aba", pdf_url)
 
     # ✅ PDF dentro da página
-    try:
-        st.components.v1.iframe(
-            pdf_url,
-            height=900,
-            scrolling=True
-        )
-        st.success("✅ Portfólio carregado dentro do sistema!")
+        try:
+            st.components.v1.iframe(
+                pdf_url,
+                height=900,
+                scrolling=True
+            )
+            st.success("✅ Portfólio carregado dentro do sistema!")
 
-    except Exception:
-        st.warning("⚠️ Não foi possível exibir o PDF aqui. Use o botão acima.")
+        except Exception:
+            st.warning("⚠️ Não foi possível exibir o PDF aqui. Use o botão acima.")
 
 
 
