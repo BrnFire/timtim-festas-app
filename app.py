@@ -3919,13 +3919,9 @@ def pagina_contratos():
     ])
 
     reservas["label"] = reservas["cliente"] + " - " + reservas["data"].astype(str)
-
     reserva_sel = st.selectbox("Selecione a reserva:", reservas["label"])
     reserva = reservas[reservas["label"] == reserva_sel].iloc[0]
 
-    # =========================
-    # 🔎 CLIENTE (dados internos)
-    # =========================
     cliente_df = clientes[
         clientes["nome"].str.lower() == str(reserva["cliente"]).lower()
     ]
@@ -3940,7 +3936,6 @@ def pagina_contratos():
     # =========================
     st.divider()
     st.subheader("📋 Cliente")
-
     st.write(f"👤 {nome_cliente}")
     st.write(f"📞 {telefone_cliente}")
 
@@ -3954,13 +3949,11 @@ def pagina_contratos():
 
     if status == "signed":
         st.success("✅ Cliente assinou")
-    elif status == "pending":
-        st.warning("⏳ Aguardando assinatura")
     else:
-        st.info("ℹ️ Não enviado")
+        st.warning("⏳ Aguardando assinatura")
 
     # =========================
-    # 📅 INFORMAÇÕES
+    # 📅 INFO
     # =========================
     st.markdown("### 📅 Informações")
 
@@ -3974,7 +3967,7 @@ def pagina_contratos():
         st.write(f"✅ Assinado em: {reserva['data_assinatura']}")
 
     # =========================
-    # 🔗 VINCULAR AUTENTIQUE
+    # 🔗 VINCULAR
     # =========================
     st.divider()
     st.subheader("🔗 Autentique")
@@ -3984,17 +3977,10 @@ def pagina_contratos():
         value=reserva.get("autentique_id", "") or ""
     )
 
-    tipo_envio = st.selectbox(
-        "Tipo de envio",
-        ["WhatsApp", "Email"]
-    )
+    tipo_envio = st.selectbox("Tipo de envio", ["WhatsApp", "Email"])
 
     def atualizar_campo(campo, valor):
-        table_update(
-            "reservas",
-            {"id": reserva["id"]},
-            {campo: valor}
-        )
+        table_update("reservas", {"id": reserva["id"]}, {campo: valor})
 
     if st.button("💾 Salvar vínculo"):
         atualizar_campo("autentique_id", autentique_id_input)
@@ -4006,7 +3992,7 @@ def pagina_contratos():
         st.success("✅ Vínculo salvo")
 
     # =========================
-    # 🔎 CONSULTAR AUTENTIQUE (VERSÃO CORRETA)
+    # 🔎 CONSULTAR AUTENTIQUE
     # =========================
     def consultar_status_autentique(document_id):
 
@@ -4036,46 +4022,39 @@ def pagina_contratos():
         response = requests.post(url, json=query, headers=headers)
 
         if response.status_code != 200:
-            st.error(f"Erro HTTP: {response.status_code}")
             return None
 
         data = response.json()
 
-        # DEBUG (se quiser ver o retorno real)
         st.write("DEBUG API:", data)
 
         if "errors" in data:
-            st.error(data["errors"])
             return None
 
         assinaturas = data.get("data", {}).get("document", {}).get("signatures", [])
 
         EMAIL_INTERNO = "festastimtim@gmail.com"
 
-        # ✅ filtra só cliente
-        assinaturas_cliente = [
-            s for s in assinaturas if s.get("email") != EMAIL_INTERNO
-        ]
+        # ✅ regra final correta
+        for assinatura in assinaturas:
 
-        if not assinaturas_cliente:
-            return "pending"
-
-        # ✅ verifica corretamente
-        for assinatura in assinaturas_cliente:
+            email = assinatura.get("email")
             acao = assinatura.get("action")
 
-            if acao and acao.get("name") == "SIGN":
+            # 🔥 só considera se tem email (cliente identificado)
+            if email and email != EMAIL_INTERNO:
 
-                data_api = assinatura.get("created_at")
+                if acao and acao.get("name") == "SIGN":
 
-                # salva data (uma única vez)
-                if data_api and not reserva.get("data_assinatura"):
-                    dt = pd.to_datetime(data_api, utc=True).tz_convert("America/Sao_Paulo")
-                    data_formatada = dt.strftime("%d/%m/%Y %H:%M")
+                    data_api = assinatura.get("created_at")
 
-                    atualizar_campo("data_assinatura", data_formatada)
+                    if data_api and not reserva.get("data_assinatura"):
+                        dt = pd.to_datetime(data_api, utc=True).tz_convert("America/Sao_Paulo")
+                        data_formatada = dt.strftime("%d/%m/%Y %H:%M")
 
-                return "signed"
+                        atualizar_campo("data_assinatura", data_formatada)
+
+                    return "signed"
 
         return "pending"
 
@@ -4125,7 +4104,7 @@ def pagina_contratos():
             st.success("✅ Contrato gerado")
 
         except Exception as e:
-            st.error(f"Erro ao gerar contrato: {e}")
+            st.error(f"Erro: {e}")
 
 
 # ========================================
