@@ -3931,8 +3931,6 @@ def pagina_contratos():
     reserva_sel = st.selectbox("Selecione a reserva:", reservas["label"])
     reserva = reservas[reservas["label"] == reserva_sel].iloc[0]
 
-    
-
     # =========================
     # 🔎 CLIENTE
     # =========================
@@ -3954,7 +3952,7 @@ def pagina_contratos():
     ]))
 
     # =========================
-    # 👀 EXIBIÇÃO
+    # 👀 EXIBIR DADOS
     # =========================
     st.divider()
     st.subheader("📋 Dados encontrados")
@@ -3964,7 +3962,7 @@ def pagina_contratos():
     st.write("🏠 Endereço:", endereco_completo)
 
     # =========================
-    # 🔏 STATUS
+    # 🔏 STATUS ASSINATURA
     # =========================
     st.divider()
     st.subheader("🔏 Status da Assinatura")
@@ -3993,12 +3991,25 @@ def pagina_contratos():
         value=reserva.get("autentique_id", "") or ""
     )
 
+    # 👉 FUNÇÃO DE UPDATE (USA SEU SUPABASE)
+    def atualizar_campo(tabela, campo, valor, id_registro):
+        from supabase import create_client
+
+        url = "https://hmrqsjdlixeazdfhrqqh.supabase.co"
+        key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhtcnFzamRsaXhlYXpkZmhycXFoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjEyMjE3MDUsImV4cCI6MjA3Njc5NzcwNX0.rM9fob3HIEl2YoL7lB7Tj7vUb21B9EzR1zLSR7VLwTM"
+
+        supabase = create_client(url, key)
+
+        supabase.table(tabela).update({
+            campo: valor
+        }).eq("id", id_registro).execute()
+
     if st.button("💾 Salvar ID"):
         atualizar_campo("reservas", "autentique_id", autentique_id_input, reserva["id"])
         st.success("✅ ID salvo! Recarregue a página.")
 
     # =========================
-    # 🔎 CONSULTAR API
+    # 🔎 CONSULTAR AUTENTIQUE
     # =========================
     def consultar_status_autentique(document_id):
         url = "https://api.autentique.com.br/v2/graphql"
@@ -4009,28 +4020,36 @@ def pagina_contratos():
         }
 
         query = {
-            "query": f'''
+            "query": f"""
             query {{
                 document(id: "{document_id}") {{
                     id
                     status
                 }}
             }}
-            '''
+            """
         }
 
         response = requests.post(url, json=query, headers=headers)
 
-
+        # DEBUG
         print("STATUS HTTP:", response.status_code)
         print("RESPOSTA COMPLETA:", response.text)
 
-        
-        if response.status_code == 200:
-            data = response.json()
-            return data["data"]["document"]["status"]
-        else:
+        if response.status_code != 200:
             return None
+
+        data = response.json()
+
+        if "errors" in data:
+            print("Erro API:", data["errors"])
+            return None
+
+        if not data.get("data") or not data["data"]["document"]:
+            print("Documento não encontrado")
+            return None
+
+        return data["data"]["document"]["status"]
 
     if reserva.get("autentique_id"):
         if st.button("🔄 Atualizar status"):
@@ -4040,7 +4059,7 @@ def pagina_contratos():
                 atualizar_campo("reservas", "status_assinatura", status_api, reserva["id"])
                 st.success(f"✅ Status atualizado: {status_api}")
             else:
-                st.error("❌ Erro ao consultar")
+                st.error("❌ Não foi possível obter status (ver logs)")
 
     # =========================
     # 🔧 SUBSTITUIR TEXTO
@@ -4122,7 +4141,6 @@ def pagina_contratos():
                     return None
 
             if st.button("📄 Gerar PDF"):
-
                 pdf = converter_para_pdf(nome_docx)
 
                 if pdf and os.path.exists(pdf):
