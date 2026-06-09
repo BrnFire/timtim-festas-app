@@ -3923,6 +3923,9 @@ def pagina_contratos():
     reserva_sel = st.selectbox("Selecione a reserva:", reservas["label"])
     reserva = reservas[reservas["label"] == reserva_sel].iloc[0]
 
+    # =========================
+    # 🔎 CLIENTE (dados internos)
+    # =========================
     cliente_df = clientes[
         clientes["nome"].str.lower() == str(reserva["cliente"]).lower()
     ]
@@ -3937,6 +3940,7 @@ def pagina_contratos():
     # =========================
     st.divider()
     st.subheader("📋 Cliente")
+
     st.write(f"👤 {nome_cliente}")
     st.write(f"📞 {telefone_cliente}")
 
@@ -3956,7 +3960,7 @@ def pagina_contratos():
         st.info("ℹ️ Não enviado")
 
     # =========================
-    # 📅 INFO
+    # 📅 INFORMAÇÕES
     # =========================
     st.markdown("### 📅 Informações")
 
@@ -3970,7 +3974,7 @@ def pagina_contratos():
         st.write(f"✅ Assinado em: {reserva['data_assinatura']}")
 
     # =========================
-    # 🔗 VINCULAR
+    # 🔗 VINCULAR AUTENTIQUE
     # =========================
     st.divider()
     st.subheader("🔗 Autentique")
@@ -4002,14 +4006,14 @@ def pagina_contratos():
         st.success("✅ Vínculo salvo")
 
     # =========================
-    # 🔎 CONSULTAR AUTENTIQUE
+    # 🔎 CONSULTAR AUTENTIQUE (VERSÃO CORRETA)
     # =========================
     def consultar_status_autentique(document_id):
 
         url = "https://api.autentique.com.br/v2/graphql"
 
         headers = {
-            "Authorization": "Bearer 33a23a237913f3e59655aec8ccf698f68d31f2f4d05e8dc32b10ebe645d6b87f",
+            "Authorization": "Bearer SEU_TOKEN_AQUI",
             "Content-Type": "application/json"
         }
 
@@ -4024,9 +4028,6 @@ def pagina_contratos():
                         }}
                         created_at
                     }}
-                    workflows {{
-                        status
-                    }}
                 }}
             }}
             """
@@ -4035,53 +4036,48 @@ def pagina_contratos():
         response = requests.post(url, json=query, headers=headers)
 
         if response.status_code != 200:
+            st.error(f"Erro HTTP: {response.status_code}")
             return None
 
         data = response.json()
 
+        # DEBUG (se quiser ver o retorno real)
+        st.write("DEBUG API:", data)
+
         if "errors" in data:
+            st.error(data["errors"])
             return None
 
-        doc = data.get("data", {}).get("document", {})
-
-        assinaturas = doc.get("signatures", [])
-        workflows = doc.get("workflows", [])
+        assinaturas = data.get("data", {}).get("document", {}).get("signatures", [])
 
         EMAIL_INTERNO = "festastimtim@gmail.com"
 
+        # ✅ filtra só cliente
         assinaturas_cliente = [
             s for s in assinaturas if s.get("email") != EMAIL_INTERNO
         ]
 
-        # ✅ status geral do documento
-        status_doc = None
-        if workflows:
-            status_doc = workflows[0].get("status")
+        if not assinaturas_cliente:
+            return "pending"
 
-        # =========================
-        # ✅ VALIDAÇÃO FINAL CORRETA
-        # =========================
-        assinou_cliente = False
-
+        # ✅ verifica corretamente
         for assinatura in assinaturas_cliente:
             acao = assinatura.get("action")
 
-            if acao is not None and acao.get("name") == "SIGN":
-                assinou_cliente = True
+            if acao and acao.get("name") == "SIGN":
 
                 data_api = assinatura.get("created_at")
 
+                # salva data (uma única vez)
                 if data_api and not reserva.get("data_assinatura"):
                     dt = pd.to_datetime(data_api, utc=True).tz_convert("America/Sao_Paulo")
                     data_formatada = dt.strftime("%d/%m/%Y %H:%M")
 
                     atualizar_campo("data_assinatura", data_formatada)
 
-        # ✅ REGRA FINAL (ESSA RESOLVE O BUG)
-        if status_doc == "finished" and assinou_cliente:
-            return "signed"
-        else:
-            return "pending"
+                return "signed"
+
+        return "pending"
 
     # =========================
     # 🔄 ATUALIZAR STATUS
@@ -4098,7 +4094,6 @@ def pagina_contratos():
                     st.success("✅ Cliente assinou (confirmado)")
                 else:
                     st.warning("⏳ Cliente ainda não assinou")
-
             else:
                 st.error("❌ Erro ao consultar Autentique")
 
@@ -4130,7 +4125,7 @@ def pagina_contratos():
             st.success("✅ Contrato gerado")
 
         except Exception as e:
-            st.error(f"Erro: {e}")
+            st.error(f"Erro ao gerar contrato: {e}")
 
 
 # ========================================
