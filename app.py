@@ -3931,6 +3931,8 @@ def pagina_contratos():
     reserva_sel = st.selectbox("Selecione a reserva:", reservas["label"])
     reserva = reservas[reservas["label"] == reserva_sel].iloc[0]
 
+    print(response.text)
+
     # =========================
     # 🔎 CLIENTE
     # =========================
