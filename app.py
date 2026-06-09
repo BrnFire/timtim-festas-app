@@ -3906,7 +3906,7 @@ def pagina_contratos():
         return
 
     # =========================
-    # 📦 CARREGAR DADOS
+    # 📦 DADOS
     # =========================
     reservas = carregar_dados("reservas", [
         "id","cliente","data",
@@ -3919,12 +3919,10 @@ def pagina_contratos():
     ])
 
     reservas["label"] = reservas["cliente"] + " - " + reservas["data"].astype(str)
+
     reserva_sel = st.selectbox("Selecione a reserva:", reservas["label"])
     reserva = reservas[reservas["label"] == reserva_sel].iloc[0]
 
-    # =========================
-    # 🔎 CLIENTE (dados internos)
-    # =========================
     cliente_df = clientes[
         clientes["nome"].str.lower() == str(reserva["cliente"]).lower()
     ]
@@ -3951,14 +3949,14 @@ def pagina_contratos():
     status = reserva.get("status_assinatura")
 
     if status == "signed":
-        st.success("✅ Cliente assinou o contrato")
+        st.success("✅ Cliente assinou")
     elif status == "pending":
         st.warning("⏳ Aguardando assinatura")
     else:
         st.info("ℹ️ Não enviado")
 
     # =========================
-    # 📅 INFORMAÇÕES
+    # 📅 INFO
     # =========================
     st.markdown("### 📅 Informações")
 
@@ -3972,7 +3970,7 @@ def pagina_contratos():
         st.write(f"✅ Assinado em: {reserva['data_assinatura']}")
 
     # =========================
-    # 🔗 VINCULAR AUTENTIQUE
+    # 🔗 VINCULAR
     # =========================
     st.divider()
     st.subheader("🔗 Autentique")
@@ -4001,7 +3999,7 @@ def pagina_contratos():
         data_envio = datetime.now().strftime("%d/%m/%Y %H:%M")
         atualizar_campo("data_envio", data_envio)
 
-        st.success("✅ Vínculo salvo com sucesso")
+        st.success("✅ Vínculo salvo")
 
     # =========================
     # 🔎 CONSULTAR AUTENTIQUE
@@ -4021,10 +4019,13 @@ def pagina_contratos():
                 document(id: "{document_id}") {{
                     signatures {{
                         email
-                        created_at
                         action {{
                             name
                         }}
+                        created_at
+                    }}
+                    workflows {{
+                        status
                     }}
                 }}
             }}
@@ -4041,41 +4042,46 @@ def pagina_contratos():
         if "errors" in data:
             return None
 
-        assinaturas = data.get("data", {}).get("document", {}).get("signatures", [])
+        doc = data.get("data", {}).get("document", {})
+
+        assinaturas = doc.get("signatures", [])
+        workflows = doc.get("workflows", [])
 
         EMAIL_INTERNO = "festastimtim@gmail.com"
 
-        # ✅ pegar APENAS cliente
         assinaturas_cliente = [
             s for s in assinaturas if s.get("email") != EMAIL_INTERNO
         ]
 
-        if not assinaturas_cliente:
-            return "pending"
+        # ✅ status geral do documento
+        status_doc = None
+        if workflows:
+            status_doc = workflows[0].get("status")
 
-        assinou = False
+        # =========================
+        # ✅ VALIDAÇÃO FINAL CORRETA
+        # =========================
+        assinou_cliente = False
 
         for assinatura in assinaturas_cliente:
-
             acao = assinatura.get("action")
 
-            # ✅ REGRA ÚNICA E CORRETA
             if acao is not None and acao.get("name") == "SIGN":
-
-                assinou = True
+                assinou_cliente = True
 
                 data_api = assinatura.get("created_at")
 
-                # salva data só uma vez
                 if data_api and not reserva.get("data_assinatura"):
                     dt = pd.to_datetime(data_api, utc=True).tz_convert("America/Sao_Paulo")
                     data_formatada = dt.strftime("%d/%m/%Y %H:%M")
 
                     atualizar_campo("data_assinatura", data_formatada)
 
-                break
-
-        return "signed" if assinou else "pending"
+        # ✅ REGRA FINAL (ESSA RESOLVE O BUG)
+        if status_doc == "finished" and assinou_cliente:
+            return "signed"
+        else:
+            return "pending"
 
     # =========================
     # 🔄 ATUALIZAR STATUS
@@ -4089,7 +4095,7 @@ def pagina_contratos():
                 atualizar_campo("status_assinatura", status_api)
 
                 if status_api == "signed":
-                    st.success("✅ Status confirmado: cliente assinou")
+                    st.success("✅ Cliente assinou (confirmado)")
                 else:
                     st.warning("⏳ Cliente ainda não assinou")
 
@@ -4124,8 +4130,7 @@ def pagina_contratos():
             st.success("✅ Contrato gerado")
 
         except Exception as e:
-            st.error(f"Erro ao gerar contrato: {e}")
-
+            st.error(f"Erro: {e}")
 
 
 # ========================================
