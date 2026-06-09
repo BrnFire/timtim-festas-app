@@ -4003,7 +4003,7 @@ def pagina_contratos():
         url = "https://api.autentique.com.br/v2/graphql"
 
         headers = {
-            "Authorization": "Bearer SEU_TOKEN_AQUI",
+            "Authorization": "Bearer 33a23a237913f3e59655aec8ccf698f68d31f2f4d05e8dc32b10ebe645d6b87f",
             "Content-Type": "application/json"
         }
 
