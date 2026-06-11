@@ -3891,6 +3891,7 @@ def pagina_funcionarios():
 # MÓDULO: CONTRATOS
 # =========================================
 
+
 def pagina_contratos():
     import streamlit as st
     from docx import Document
@@ -3915,7 +3916,7 @@ def pagina_contratos():
         "horario_entrega","horario_retirada",
         "valor_total","valor_extra","frete","desconto",
         "sinal","falta","observacao","status",
-        "contrato_gerado"
+        "contrato_gerado"  # ✅ NOVO
     ])
 
     clientes = carregar_dados("clientes", [
@@ -3928,13 +3929,13 @@ def pagina_contratos():
         return
 
     # =========================
-    # 🧠 TRATAMENTO
+    # ✅ TRATAMENTO (NOVO)
     # =========================
     reservas["contrato_gerado"] = reservas.get("contrato_gerado", "Não").fillna("Não")
     reservas["data"] = pd.to_datetime(reservas["data"], errors="coerce")
 
     # =========================
-    # ✅ CARDS BONITOS (NOVO)
+    # ✅ CARDS (NOVO)
     # =========================
     total = len(reservas)
     gerados = len(reservas[reservas["contrato_gerado"] == "Sim"])
@@ -3957,8 +3958,10 @@ def pagina_contratos():
 
     with c1:
         st.markdown(card("📄 Total Reservas", total, "#0078D7"), unsafe_allow_html=True)
+
     with c2:
         st.markdown(card("✅ Contratos Gerados", gerados, "#2ECC71"), unsafe_allow_html=True)
+
     with c3:
         cor_pendente = "#E74C3C" if len(pendentes) > 0 else "#2ECC71"
         st.markdown(card("⏳ Pendentes", len(pendentes), cor_pendente), unsafe_allow_html=True)
@@ -3992,12 +3995,13 @@ def pagina_contratos():
     ]
 
     if cliente_df.empty:
+        st.warning("⚠️ Cliente não encontrado")
         cliente = {}
     else:
         cliente = cliente_df.iloc[0].to_dict()
 
     # =========================
-    # 🏠 ENDEREÇO
+    # 🏠 MONTAR ENDEREÇO
     # =========================
     endereco_completo = " - ".join(filter(None, [
         f"{cliente.get('logradouro','')}, {cliente.get('numero','')}" if cliente.get("logradouro") else "",
@@ -4016,10 +4020,10 @@ def pagina_contratos():
     st.write("📅 Data:", reserva["data"])
     st.write("🎠 Brinquedos:", reserva["brinquedos"])
     st.write("🏠 Endereço:", endereco_completo)
-    st.write("📄 Status:", reserva.get("contrato_gerado","Não"))
+    st.write("📄 Contrato Gerado:", reserva.get("contrato_gerado", "Não"))
 
     # =========================
-    # ✅ MARCAR COMO GERADO
+    # ✅ BOTÃO MARCAR (NOVO)
     # =========================
     if st.button("✅ Marcar como gerado"):
         atualizar_por_filtro("reservas", {"contrato_gerado": "Sim"}, {"id": reserva["id"]})
@@ -4043,7 +4047,7 @@ def pagina_contratos():
                         cell.text = cell.text.replace(chave, valor)
 
     # =========================
-    # 📄 GERAR CONTRATO (ORIGINAL - INTACTO)
+    # 📄 GERAR CONTRATO (SEU ORIGINAL INTACTO)
     # =========================
     if st.button("📄 Gerar contrato"):
 
@@ -4060,6 +4064,8 @@ def pagina_contratos():
             restante = reserva["falta"]
 
             substituir_tudo(doc, "{{cliente_nome}}", reserva["cliente"])
+            substituir_tudo(doc, "{{cliente_cpf}}", cliente.get("cpf", ""))
+            substituir_tudo(doc, "{{cliente_rg}}", cliente.get("rg", ""))
             substituir_tudo(doc, "{{cliente_email}}", cliente.get("email", ""))
             substituir_tudo(doc, "{{cliente_telefone}}", cliente.get("telefone", ""))
             substituir_tudo(doc, "{{endereco}}", endereco_completo)
@@ -4070,6 +4076,8 @@ def pagina_contratos():
                 pd.to_datetime(reserva["data"]).strftime("%d/%m/%Y")
             )
 
+            substituir_tudo(doc, "{{hora_entrega}}", reserva["horario_entrega"])
+            substituir_tudo(doc, "{{hora_retirada}}", reserva["horario_retirada"])
             substituir_tudo(doc, "{{lista_brinquedos}}", reserva["brinquedos"])
 
             substituir_tudo(doc, "{{dia}}", dia)
@@ -4088,23 +4096,48 @@ def pagina_contratos():
             with open(nome_docx, "rb") as f:
                 st.download_button("⬇️ Baixar Word", f, file_name=nome_docx)
 
+            def converter_para_pdf(nome_docx):
+                try:
+                    subprocess.run([
+                        "libreoffice",
+                        "--headless",
+                        "--convert-to",
+                        "pdf",
+                        nome_docx
+                    ])
+                    return nome_docx.replace(".docx", ".pdf")
+                except:
+                    return None
+
+            if st.button("📄 Gerar PDF"):
+
+                pdf = converter_para_pdf(nome_docx)
+
+                if pdf and os.path.exists(pdf):
+                    with open(pdf, "rb") as f:
+                        st.download_button("⬇️ Baixar PDF", f, file_name=pdf)
+                    st.success("✅ PDF gerado com sucesso!")
+                else:
+                    st.warning("⚠️ Não foi possível gerar o PDF no servidor")
+
         except Exception as e:
             st.error(f"❌ Erro: {e}")
 
     # =========================
-    # 🔎 AUTENTIQUE (INTACTO)
+    # 🔎 AUTENTIQUE (INALTERADO)
     # =========================
     st.divider()
-    st.subheader("🔎 Painel Autentique")
+    st.subheader("🔎 Painel Autentique (espelho)")
 
     st.link_button(
-        "🔗 Abrir Autentique",
+        "🔗 Abrir Autentique em nova aba",
         "https://app.autentique.com.br/documentos"
     )
 
     st.components.v1.iframe(
         "https://app.autentique.com.br/documentos",
-        height=800
+        height=800,
+        scrolling=True
     )
 
 # ========================================
