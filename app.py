@@ -3900,17 +3900,13 @@ def pagina_contratos():
     from datetime import datetime
     import subprocess
 
-
     st.title("📄 Gerar Contratos")
 
-
     caminho_modelo = "modelos/contrato_modelo.docx"
-
 
     if not os.path.exists(caminho_modelo):
         st.error("❌ Modelo não encontrado")
         return
-
 
     # =========================
     # 📦 CARREGAR DADOS
@@ -3919,30 +3915,78 @@ def pagina_contratos():
         "id","cliente","brinquedos","data",
         "horario_entrega","horario_retirada",
         "valor_total","valor_extra","frete","desconto",
-        "sinal","falta","observacao","status"
+        "sinal","falta","observacao","status",
+        "contrato_gerado"
     ])
-
 
     clientes = carregar_dados("clientes", [
         "nome","cpf","rg","email","telefone",
         "logradouro","numero","complemento","cidade","cep"
     ])
 
-
     if reservas.empty:
         st.warning("Sem reservas")
         return
 
+    # =========================
+    # 📊 STATUS DOS CONTRATOS
+    # =========================
+    reservas["contrato_gerado"] = reservas["contrato_gerado"].fillna("Não")
+    reservas["data"] = pd.to_datetime(reservas["data"], errors="coerce")
+
+    hoje = pd.Timestamp.now().normalize()
+
+    total = len(reservas)
+    gerados = len(reservas[reservas["contrato_gerado"] == "Sim"])
+    pendentes = reservas[reservas["contrato_gerado"] != "Sim"]
+
+    pendentes_proximos = pendentes[
+        (pendentes["data"] >= hoje) &
+        (pendentes["data"] <= hoje + pd.Timedelta(days=3))
+    ]
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("📄 Total", total)
+    c2.metric("✅ Gerados", gerados)
+    c3.metric("⏳ Pendentes", len(pendentes))
+
+    if not pendentes_proximos.empty:
+        st.warning(f"🚨 {len(pendentes_proximos)} contrato(s) pendente(s) nos próximos 3 dias!")
+
+    st.divider()
+
+    # =========================
+    # 📅 LISTA URGENTE
+    # =========================
+    st.markdown("### ⚠️ Contratos próximos")
+
+    if pendentes_proximos.empty:
+        st.success("✅ Nenhum contrato urgente")
+    else:
+        for _, row in pendentes_proximos.iterrows():
+            dias = (row["data"] - hoje).days
+
+            if dias == 0:
+                tempo = "HOJE"
+            elif dias == 1:
+                tempo = "AMANHÃ"
+            else:
+                tempo = f"em {dias} dias"
+
+            st.markdown(f"""
+            🔴 **{row['cliente']}**  
+            📅 {row['data'].strftime("%d/%m/%Y")} ({tempo})
+            """)
+
+    st.divider()
 
     # =========================
     # 🔽 ESCOLHER RESERVA
     # =========================
     reservas["label"] = reservas["cliente"] + " - " + reservas["data"].astype(str)
 
-
     reserva_sel = st.selectbox("Selecione a reserva:", reservas["label"])
     reserva = reservas[reservas["label"] == reserva_sel].iloc[0]
-
 
     # =========================
     # 🔎 BUSCAR CLIENTE
@@ -3952,16 +3996,10 @@ def pagina_contratos():
         str(reserva["cliente"]).strip().lower()
     ]
 
-
-    if cliente_df.empty:
-        st.warning("⚠️ Cliente não encontrado")
-        cliente = {}
-    else:
-        cliente = cliente_df.iloc[0].to_dict()
-
+    cliente = cliente_df.iloc[0].to_dict() if not cliente_df.empty else {}
 
     # =========================
-    # 🏠 MONTAR ENDEREÇO
+    # 🏠 ENDEREÇO
     # =========================
     endereco_completo = " - ".join(filter(None, [
         f"{cliente.get('logradouro','')}, {cliente.get('numero','')}" if cliente.get("logradouro") else "",
@@ -3970,174 +4008,110 @@ def pagina_contratos():
         f"CEP: {cliente.get('cep','')}" if cliente.get("cep") else ""
     ]))
 
+    # =========================
+    # 🎨 COR DINÂMICA
+    # =========================
+    data_evento = pd.to_datetime(reserva.get("data"), errors="coerce")
+    status_contrato = reserva.get("contrato_gerado", "Não")
+
+    if status_contrato == "Sim":
+        cor_card = "#D4EDDA"
+    else:
+        if pd.notna(data_evento):
+            dias = (data_evento - pd.Timestamp.now()).days
+            if dias <= 2:
+                cor_card = "#F8D7DA"
+            elif dias <= 5:
+                cor_card = "#FFF3CD"
+            else:
+                cor_card = "#F1F1F1"
+        else:
+            cor_card = "#F1F1F1"
 
     # =========================
     # 👀 EXIBIR DADOS
     # =========================
-    st.divider()
-
+    st.markdown(f"<div style='background-color:{cor_card};padding:15px;border-radius:10px;'>", unsafe_allow_html=True)
 
     st.subheader("📋 Dados encontrados")
     st.write("👤 Cliente:", reserva["cliente"])
     st.write("📅 Data:", reserva["data"])
     st.write("🎠 Brinquedos:", reserva["brinquedos"])
     st.write("🏠 Endereço:", endereco_completo)
+    st.write("📄 Status:", status_contrato)
 
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.divider()
 
     # =========================
-    # 🔧 FUNÇÃO SUBSTITUIR
+    # ✅ MARCAR CONTRATO
+    # =========================
+    if st.button("✅ Marcar como gerado"):
+        atualizar_por_filtro("reservas", {"contrato_gerado": "Sim"}, {"id": reserva["id"]})
+        st.success("Atualizado ✅")
+        st.rerun()
+
+    # =========================
+    # 🔧 SUBSTITUIR
     # =========================
     def substituir_tudo(doc, chave, valor):
         valor = str(valor) if valor is not None else ""
-
-
         for p in doc.paragraphs:
             if chave in p.text:
                 p.text = p.text.replace(chave, valor)
-
-
         for table in doc.tables:
             for row in table.rows:
                 for cell in row.cells:
                     if chave in cell.text:
                         cell.text = cell.text.replace(chave, valor)
 
-
     # =========================
     # 📄 GERAR CONTRATO
     # =========================
     if st.button("📄 Gerar contrato"):
-
-
         try:
             doc = Document(caminho_modelo)
 
-
-            # =========================
-            # 🗓️ DATA ATUAL
-            # =========================
             data_atual = datetime.now()
-            dia = data_atual.strftime("%d")
-            mes = data_atual.strftime("%B").capitalize()
-            ano = data_atual.strftime("%Y")
+            substituir_tudo(doc, "{{dia}}", data_atual.strftime("%d"))
+            substituir_tudo(doc, "{{mes}}", data_atual.strftime("%B").capitalize())
+            substituir_tudo(doc, "{{ano}}", data_atual.strftime("%Y"))
 
-
-            # =========================
-            # 💰 VALORES
-            # =========================
-            valor_total = reserva["valor_total"]
-            entrada = reserva["sinal"]
-            restante = reserva["falta"]
-
-
-            # =========================
-            # 🔁 CLIENTE
-            # =========================
             substituir_tudo(doc, "{{cliente_nome}}", reserva["cliente"])
-            substituir_tudo(doc, "{{cliente_cpf}}", cliente.get("cpf", ""))
-            substituir_tudo(doc, "{{cliente_rg}}", cliente.get("rg", ""))
             substituir_tudo(doc, "{{cliente_email}}", cliente.get("email", ""))
             substituir_tudo(doc, "{{cliente_telefone}}", cliente.get("telefone", ""))
             substituir_tudo(doc, "{{endereco}}", endereco_completo)
-
-
-            # =========================
-            # 🔁 EVENTO
-            # =========================
-            substituir_tudo(
-                doc,
-                "{{data_evento}}",
-                pd.to_datetime(reserva["data"]).strftime("%d/%m/%Y")
-            )
-
-
-            substituir_tudo(doc, "{{hora_entrega}}", reserva["horario_entrega"])
-            substituir_tudo(doc, "{{hora_retirada}}", reserva["horario_retirada"])
+            substituir_tudo(doc, "{{data_evento}}", reserva["data"].strftime("%d/%m/%Y"))
             substituir_tudo(doc, "{{lista_brinquedos}}", reserva["brinquedos"])
 
+            substituir_tudo(doc, "{{valor_total}}", f"{reserva['valor_total']:,.2f}")
+            substituir_tudo(doc, "{{valor_entrada}}", f"{reserva['sinal']:,.2f}")
+            substituir_tudo(doc, "{{valor_restante}}", f"{reserva['falta']:,.2f}")
 
-            # =========================
-            # 🔁 DATA CONTRATO
-            # =========================
-            substituir_tudo(doc, "{{dia}}", dia)
-            substituir_tudo(doc, "{{mes}}", mes)
-            substituir_tudo(doc, "{{ano}}", ano)
-
-
-            # =========================
-            # 🔁 VALORES
-            # =========================
-            substituir_tudo(doc, "{{valor_total}}", f"{valor_total:,.2f}")
-            substituir_tudo(doc, "{{valor_entrada}}", f"{entrada:,.2f}")
-            substituir_tudo(doc, "{{valor_restante}}", f"{restante:,.2f}")
-
-
-            # =========================
-            # 💾 SALVAR DOCX
-            # =========================
-            nome_docx = f"contrato_{reserva['cliente'].replace(' ', '_')}.docx"
+            nome_docx = f"contrato_{reserva['cliente'].replace(' ','_')}.docx"
             doc.save(nome_docx)
 
-
-            st.success("✅ Contrato Word gerado!")
-
+            st.success("✅ Word gerado")
 
             with open(nome_docx, "rb") as f:
                 st.download_button("⬇️ Baixar Word", f, file_name=nome_docx)
 
-
-            # =========================
-            # 📄 BOTÃO GERAR PDF
-            # =========================
-            def converter_para_pdf(nome_docx):
-                try:
-                    subprocess.run([
-                        "libreoffice",
-                        "--headless",
-                        "--convert-to",
-                        "pdf",
-                        nome_docx
-                    ])
-                    return nome_docx.replace(".docx", ".pdf")
-                except:
-                    return None
-
-
-            if st.button("📄 Gerar PDF"):
-
-
-                pdf = converter_para_pdf(nome_docx)
-
-
-                if pdf and os.path.exists(pdf):
-                    with open(pdf, "rb") as f:
-                        st.download_button("⬇️ Baixar PDF", f, file_name=pdf)
-                    st.success("✅ PDF gerado com sucesso!")
-                else:
-                    st.warning("⚠️ Não foi possível gerar o PDF no servidor")
-
-
         except Exception as e:
-            st.error(f"❌ Erro: {e}")
+            st.error(f"Erro: {e}")
 
-
-    # ====================================================
-    # 🔎 PAINEL AUTENTIQUE (ADICIONADO AQUI)
-    # ====================================================
     st.divider()
-    st.subheader("🔎 Painel Autentique (espelho)")
 
-    # ✅ botão seguro
-    st.link_button(
-        "🔗 Abrir Autentique em nova aba",
-        "https://app.autentique.com.br/documentos"
-    )
+    # =========================
+    # 🔎 AUTENTIQUE
+    # =========================
+    st.subheader("🔎 Painel Autentique")
 
-    # ✅ iframe (espelho dentro do app)
+    st.link_button("🔗 Abrir", "https://app.autentique.com.br/documentos")
+
     st.components.v1.iframe(
         "https://app.autentique.com.br/documentos",
-        height=800,
-        scrolling=True
+        height=700
     )
 
 # ========================================
