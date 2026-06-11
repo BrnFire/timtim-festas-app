@@ -4047,7 +4047,7 @@ def pagina_contratos():
     st.write(f"👤 {reserva['cliente']}")
     st.write(f"📅 {reserva['data'].strftime('%d/%m/%Y')}")
     st.write(f"🎠 {reserva['brinquedos']}")
-    st.write(f"📄 Status: {status_contrato}")
+    st.write(f"📄 Contrato gerado?: {status_contrato}")
 
     st.markdown("</div>", unsafe_allow_html=True)
 
