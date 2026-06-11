@@ -3891,7 +3891,6 @@ def pagina_funcionarios():
 # MÓDULO: CONTRATOS
 # =========================================
 
-
 def pagina_contratos():
     import streamlit as st
     from docx import Document
@@ -3919,17 +3918,12 @@ def pagina_contratos():
         "contrato_gerado"
     ])
 
-    clientes = carregar_dados("clientes", [
-        "nome","cpf","rg","email","telefone",
-        "logradouro","numero","complemento","cidade","cep"
-    ])
-
     if reservas.empty:
         st.warning("Sem reservas")
         return
 
     # =========================
-    # 📊 STATUS DOS CONTRATOS
+    # 🧠 TRATAMENTO
     # =========================
     reservas["contrato_gerado"] = reservas["contrato_gerado"].fillna("Não")
     reservas["data"] = pd.to_datetime(reservas["data"], errors="coerce")
@@ -3938,40 +3932,61 @@ def pagina_contratos():
 
     total = len(reservas)
     gerados = len(reservas[reservas["contrato_gerado"] == "Sim"])
-    pendentes = reservas[reservas["contrato_gerado"] != "Sim"]
+    pendentes = reservas[reservas["contrato_gerado"] == "Não"]
 
+    # =========================
+    # 🎯 CARDS ESTILO PROFISSIONAL
+    # =========================
+    c1, c2, c3 = st.columns(3)
+
+    def card(titulo, valor, cor):
+        return f"""
+        <div style="
+            background:#f9f9f9;
+            border-left:6px solid {cor};
+            border-radius:12px;
+            padding:15px;
+            text-align:left;
+            box-shadow:2px 2px 10px rgba(0,0,0,0.1);">
+            <div style="font-size:14px;color:#555;">{titulo}</div>
+            <div style="font-size:22px;font-weight:bold;">{valor}</div>
+        </div>
+        """
+
+    with c1:
+        st.markdown(card("📄 Total Reservas", total, "#0078D7"), unsafe_allow_html=True)
+
+    with c2:
+        st.markdown(card("✅ Contratos Gerados", gerados, "#2ECC71"), unsafe_allow_html=True)
+
+    with c3:
+        cor_pendente = "#E74C3C" if len(pendentes) > 0 else "#2ECC71"
+        st.markdown(card("⏳ Pendentes", len(pendentes), cor_pendente), unsafe_allow_html=True)
+
+    st.divider()
+
+    # =========================
+    # 🔔 ALERTA DE URGÊNCIA
+    # =========================
     pendentes_proximos = pendentes[
         (pendentes["data"] >= hoje) &
         (pendentes["data"] <= hoje + pd.Timedelta(days=3))
     ]
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("📄 Total", total)
-    c2.metric("✅ Gerados", gerados)
-    c3.metric("⏳ Pendentes", len(pendentes))
-
     if not pendentes_proximos.empty:
         st.warning(f"🚨 {len(pendentes_proximos)} contrato(s) pendente(s) nos próximos 3 dias!")
-
-    st.divider()
 
     # =========================
     # 📅 LISTA URGENTE
     # =========================
-    st.markdown("### ⚠️ Contratos próximos")
+    st.subheader("⚠️ Contratos próximos")
 
     if pendentes_proximos.empty:
         st.success("✅ Nenhum contrato urgente")
     else:
         for _, row in pendentes_proximos.iterrows():
             dias = (row["data"] - hoje).days
-
-            if dias == 0:
-                tempo = "HOJE"
-            elif dias == 1:
-                tempo = "AMANHÃ"
-            else:
-                tempo = f"em {dias} dias"
+            tempo = "HOJE" if dias == 0 else "AMANHÃ" if dias == 1 else f"em {dias} dias"
 
             st.markdown(f"""
             🔴 **{row['cliente']}**  
@@ -3981,64 +3996,58 @@ def pagina_contratos():
     st.divider()
 
     # =========================
-    # 🔽 ESCOLHER RESERVA
+    # 🎯 FILTRO
     # =========================
-    reservas["label"] = reservas["cliente"] + " - " + reservas["data"].astype(str)
+    filtro = st.radio(
+        "Filtro:",
+        ["Todos", "Somente Pendentes"],
+        horizontal=True
+    )
 
-    reserva_sel = st.selectbox("Selecione a reserva:", reservas["label"])
-    reserva = reservas[reservas["label"] == reserva_sel].iloc[0]
-
-    # =========================
-    # 🔎 BUSCAR CLIENTE
-    # =========================
-    cliente_df = clientes[
-        clientes["nome"].str.strip().str.lower() ==
-        str(reserva["cliente"]).strip().lower()
-    ]
-
-    cliente = cliente_df.iloc[0].to_dict() if not cliente_df.empty else {}
+    if filtro == "Somente Pendentes":
+        reservas_filtradas = pendentes
+    else:
+        reservas_filtradas = reservas
 
     # =========================
-    # 🏠 ENDEREÇO
+    # 🔽 SELEÇÃO
     # =========================
-    endereco_completo = " - ".join(filter(None, [
-        f"{cliente.get('logradouro','')}, {cliente.get('numero','')}" if cliente.get("logradouro") else "",
-        cliente.get("complemento", ""),
-        cliente.get("cidade", ""),
-        f"CEP: {cliente.get('cep','')}" if cliente.get("cep") else ""
-    ]))
+    reservas_filtradas["label"] = reservas_filtradas["cliente"] + " - " + reservas_filtradas["data"].astype(str)
+
+    reserva_sel = st.selectbox(
+        "Selecione a reserva:",
+        reservas_filtradas["label"]
+    )
+
+    reserva = reservas_filtradas[reservas_filtradas["label"] == reserva_sel].iloc[0]
 
     # =========================
     # 🎨 COR DINÂMICA
     # =========================
-    data_evento = pd.to_datetime(reserva.get("data"), errors="coerce")
+    data_evento = reserva["data"]
     status_contrato = reserva.get("contrato_gerado", "Não")
 
     if status_contrato == "Sim":
         cor_card = "#D4EDDA"
     else:
-        if pd.notna(data_evento):
-            dias = (data_evento - pd.Timestamp.now()).days
-            if dias <= 2:
-                cor_card = "#F8D7DA"
-            elif dias <= 5:
-                cor_card = "#FFF3CD"
-            else:
-                cor_card = "#F1F1F1"
+        dias = (data_evento - hoje).days
+        if dias <= 2:
+            cor_card = "#F8D7DA"
+        elif dias <= 5:
+            cor_card = "#FFF3CD"
         else:
             cor_card = "#F1F1F1"
 
     # =========================
-    # 👀 EXIBIR DADOS
+    # 👀 CARD DO CLIENTE
     # =========================
     st.markdown(f"<div style='background-color:{cor_card};padding:15px;border-radius:10px;'>", unsafe_allow_html=True)
 
-    st.subheader("📋 Dados encontrados")
-    st.write("👤 Cliente:", reserva["cliente"])
-    st.write("📅 Data:", reserva["data"])
-    st.write("🎠 Brinquedos:", reserva["brinquedos"])
-    st.write("🏠 Endereço:", endereco_completo)
-    st.write("📄 Status:", status_contrato)
+    st.subheader("📋 Dados da Reserva")
+    st.write(f"👤 {reserva['cliente']}")
+    st.write(f"📅 {reserva['data'].strftime('%d/%m/%Y')}")
+    st.write(f"🎠 {reserva['brinquedos']}")
+    st.write(f"📄 Status: {status_contrato}")
 
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -4051,54 +4060,6 @@ def pagina_contratos():
         atualizar_por_filtro("reservas", {"contrato_gerado": "Sim"}, {"id": reserva["id"]})
         st.success("Atualizado ✅")
         st.rerun()
-
-    # =========================
-    # 🔧 SUBSTITUIR
-    # =========================
-    def substituir_tudo(doc, chave, valor):
-        valor = str(valor) if valor is not None else ""
-        for p in doc.paragraphs:
-            if chave in p.text:
-                p.text = p.text.replace(chave, valor)
-        for table in doc.tables:
-            for row in table.rows:
-                for cell in row.cells:
-                    if chave in cell.text:
-                        cell.text = cell.text.replace(chave, valor)
-
-    # =========================
-    # 📄 GERAR CONTRATO
-    # =========================
-    if st.button("📄 Gerar contrato"):
-        try:
-            doc = Document(caminho_modelo)
-
-            data_atual = datetime.now()
-            substituir_tudo(doc, "{{dia}}", data_atual.strftime("%d"))
-            substituir_tudo(doc, "{{mes}}", data_atual.strftime("%B").capitalize())
-            substituir_tudo(doc, "{{ano}}", data_atual.strftime("%Y"))
-
-            substituir_tudo(doc, "{{cliente_nome}}", reserva["cliente"])
-            substituir_tudo(doc, "{{cliente_email}}", cliente.get("email", ""))
-            substituir_tudo(doc, "{{cliente_telefone}}", cliente.get("telefone", ""))
-            substituir_tudo(doc, "{{endereco}}", endereco_completo)
-            substituir_tudo(doc, "{{data_evento}}", reserva["data"].strftime("%d/%m/%Y"))
-            substituir_tudo(doc, "{{lista_brinquedos}}", reserva["brinquedos"])
-
-            substituir_tudo(doc, "{{valor_total}}", f"{reserva['valor_total']:,.2f}")
-            substituir_tudo(doc, "{{valor_entrada}}", f"{reserva['sinal']:,.2f}")
-            substituir_tudo(doc, "{{valor_restante}}", f"{reserva['falta']:,.2f}")
-
-            nome_docx = f"contrato_{reserva['cliente'].replace(' ','_')}.docx"
-            doc.save(nome_docx)
-
-            st.success("✅ Word gerado")
-
-            with open(nome_docx, "rb") as f:
-                st.download_button("⬇️ Baixar Word", f, file_name=nome_docx)
-
-        except Exception as e:
-            st.error(f"Erro: {e}")
 
     st.divider()
 
@@ -4113,6 +4074,7 @@ def pagina_contratos():
         "https://app.autentique.com.br/documentos",
         height=700
     )
+
 
 # ========================================
 # PAGINA CONTRATO FIM
