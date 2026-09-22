@@ -254,9 +254,9 @@ def tempo_servico(parada: dict, cat_map: dict) -> int:
 Tempo FIXO por parada, independente da quantidade de brinquedos
 ou da categoria. Ajuste as constantes no topo do arquivo.
 """
-if parada["tipo"] == "Entrega":
-return int(MIN_MONTAGEM_PADRAO)
-return int(MIN_DESMONTAGEM_PADRAO)
+    if parada["tipo"] == "Entrega":
+        return int(MIN_MONTAGEM_PADRAO)
+    return int(MIN_DESMONTAGEM_PADRAO)
 
 
 def _carregar_categorias() -> dict:
