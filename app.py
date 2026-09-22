@@ -9,6 +9,7 @@ from dateutil import parser
 from banco import carregar_dados, salvar_dados
 from banco import _ensure_cols
 from roteiro import pagina_roteiro
+from escala import pagina_escala
 
 # ========================================
 # CONFIGURAÇÃO INICIAL
@@ -4575,6 +4576,7 @@ else:
             "Pré-Reservas": ("📊 Aprovar Reservas", "pre_reservas"),
             "Agenda": ("🕓 Agenda", "agenda"),
             "Roteiro": ("🚚 Roteiro do Dia", "roteiro"),
+            "Escala": ("👷 Escala de Equipe", "escala"),
             "Custos": ("💸 Custos", "custos"), 
             "Estoque": ("📦 Estoque", "estoque"),    
             "Check-list": ("✅ Check-list", "check-list"), 
@@ -4664,6 +4666,8 @@ else:
         pagina_contratos() 
     elif menu == "Roteiro":
         pagina_roteiro()
+    elif menu == "Escala":
+        pagina_escala()
     elif menu == "Sair":
         st.session_state["logado"] = False
         st.experimental_rerun()
