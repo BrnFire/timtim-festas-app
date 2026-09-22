@@ -2694,6 +2694,7 @@ def pagina_checklist():
 # ==============================
 # MÓDULO FROTA – TimTim Festas (Supabase)
 # ==============================
+
 import pandas as pd
 import streamlit as st
 from datetime import datetime, date
@@ -2720,50 +2721,150 @@ TIPOS_MANU = [
 KM_TROCA_OLEO = 6000
 MESES_TROCA_OLEO = 6
 
+COLS_DATA = {
+    "veiculos": ["data_ipva", "data_licenciamento", "data_seguro"],
+    "manutencoes": ["data"],
+    "custos": ["data"],
+    "km_log": ["data"],
+}
+
+
 # ---------------------------------
 # FUNÇÕES DE CONVERSÃO E NORMALIZAÇÃO
 # ---------------------------------
-def _dates_to_str(df: pd.DataFrame) -> pd.DataFrame:
+def _dates_to_str(df: pd.DataFrame, cols_data: list[str] | None = None) -> pd.DataFrame:
+    """
+    Converte SOMENTE as colunas de data para texto 'YYYY-MM-DD'.
+    CORREÇÃO: o antigo pd.to_datetime(errors='ignore') foi removido no pandas 2.2+
+    e além disso tentava converter colunas de texto (modelo, placa, observação).
+    """
     df = df.copy()
-    for c in df.columns:
-        if df[c].dtype == "object":
-            try:
-                df[c] = pd.to_datetime(df[c], errors="ignore").astype(str)
-            except Exception:
-                pass
-        elif pd.api.types.is_datetime64_any_dtype(df[c]):
-            df[c] = df[c].dt.strftime("%Y-%m-%d")
-    return df
+    alvo = cols_data if cols_data else [c for c in df.columns if str(c).startswith("data")]
+    for c in alvo:
+        if c in df.columns:
+            s = pd.to_datetime(df[c], errors="coerce")
+            df[c] = s.dt.strftime("%Y-%m-%d")
+    # NaT/NaN viram None para o Supabase aceitar
+    return df.where(pd.notna(df), None)
+
 
 def _norm_cols(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [str(c).strip().lower().replace(" ", "_") for c in df.columns]
     return df
 
+
 def _ensure_cols(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
+    df = df.copy()
     for c in cols:
         if c not in df.columns:
             df[c] = None
     return df[cols]
 
-def _to_date(series: pd.Series):
-    return pd.to_datetime(series, errors="coerce").dt.date
 
-def _to_num(series: pd.Series, as_int=False):
+def _to_date(series: pd.Series) -> pd.Series:
+    """Retorna série de datetime.date (ou None). Seguro para série vazia."""
+    s = pd.to_datetime(series, errors="coerce")
+    return s.dt.date.where(s.notna(), None)
+
+
+def _to_num(series: pd.Series, as_int=False) -> pd.Series:
     s = pd.to_numeric(series, errors="coerce").fillna(0)
-    return s.astype(int) if as_int else s
+    return s.astype(int) if as_int else s.astype(float)
 
-def _to_bool(series: pd.Series):
-    TRUE_SET = {"true","1","sim","yes","y","verdadeiro","pago","ok","on","t"}
+
+def _to_bool(series: pd.Series) -> pd.Series:
+    TRUE_SET = {"true", "1", "sim", "yes", "y", "verdadeiro", "pago", "ok", "on", "t"}
     return series.astype(str).str.strip().str.lower().isin(TRUE_SET)
 
+
+def _safe_date(valor):
+    """Converte qualquer coisa (str, Timestamp, NaT, None) em date ou None."""
+    if valor is None:
+        return None
+    try:
+        if pd.isna(valor):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if isinstance(valor, datetime):
+        return valor.date()
+    if isinstance(valor, date):
+        return valor
+    ts = pd.to_datetime(valor, errors="coerce")
+    return None if pd.isna(ts) else ts.date()
+
+
+def _fmt_date(valor, padrao="-"):
+    """strftime seguro: nunca quebra com NaT/None."""
+    d = _safe_date(valor)
+    return d.strftime("%d/%m/%Y") if d else padrao
+
+
+def _safe_int(valor, padrao=0):
+    try:
+        if valor is None or pd.isna(valor):
+            return padrao
+        return int(float(valor))
+    except (TypeError, ValueError):
+        return padrao
+
+
+def _tipar_veiculos(df: pd.DataFrame) -> pd.DataFrame:
+    """CORREÇÃO: tipagem aplicada SEMPRE, mesmo com DataFrame vazio."""
+    df = df.copy()
+    df["placa"] = df["placa"].astype(str).str.upper().str.strip()
+    df["modelo"] = df["modelo"].astype(str).replace({"None": "", "nan": ""})
+    df["ano"] = _to_num(df["ano"], True)
+    df["km_atual"] = _to_num(df["km_atual"], True)
+    df["valor_veiculo"] = _to_num(df["valor_veiculo"])
+    for d in COLS_DATA["veiculos"]:
+        df[d] = _to_date(df[d])
+    for b in ["ipva_pago", "licenciamento_pago", "seguro_pago"]:
+        df[b] = _to_bool(df[b])
+    return df
+
+
+def _tipar_manutencoes(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df["placa"] = df["placa"].astype(str).str.upper().str.strip()
+    df["tipo"] = df["tipo"].astype(str)          # CORREÇÃO: evita erro .str.lower() com None
+    df["data"] = _to_date(df["data"])
+    df["valor"] = _to_num(df["valor"])
+    df["km"] = _to_num(df["km"], True)
+    return df
+
+
+def _tipar_kmlog(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df["placa"] = df["placa"].astype(str).str.upper().str.strip()
+    df["data"] = _to_date(df["data"])
+    df["km"] = _to_num(df["km"], True)
+    return df
+
+
+def _df_exibicao(df: pd.DataFrame, cols_data: list[str]) -> pd.DataFrame:
+    """CORREÇÃO: evita erro do Arrow ao exibir colunas mistas (date + None)."""
+    out = df.copy()
+    for c in cols_data:
+        if c in out.columns:
+            out[c] = out[c].apply(lambda x: _fmt_date(x, ""))
+    for c in out.columns:
+        if out[c].dtype == "object":
+            out[c] = out[c].astype(str).replace({"None": "", "nan": "", "NaT": ""})
+    return out
+
+
 def meses_passados(d1: date, d2: date) -> int:
-    if pd.isna(d1) or d1 is None or pd.isna(d2) or d2 is None:
+    d1, d2 = _safe_date(d1), _safe_date(d2)
+    if d1 is None or d2 is None:
         return 9999
     return (d2.year - d1.year) * 12 + (d2.month - d1.month) - (1 if d2.day < d1.day else 0)
 
-def alerta_vencimento(rotulo: str, data_venc: date):
-    if data_venc is None or pd.isna(data_venc):
+
+def alerta_vencimento(rotulo: str, data_venc):
+    data_venc = _safe_date(data_venc)          # CORREÇÃO: aceita str/NaT sem quebrar
+    if data_venc is None:
         st.info(f"{rotulo}: sem data informada.")
         return
     delta = (data_venc - date.today()).days
@@ -2774,33 +2875,48 @@ def alerta_vencimento(rotulo: str, data_venc: date):
     else:
         st.success(f"✅ {rotulo} em dia (vence {data_venc.strftime('%d/%m/%Y')})")
 
+
 def proxima_troca_oleo_alerta(veic_row: pd.Series, df_manu: pd.DataFrame):
-    placa = veic_row["placa"]
-    km_atual = int(veic_row.get("km_atual", 0) or 0)
-    manu_placa = df_manu[(df_manu["placa"] == placa) & (df_manu["tipo"].str.lower() == "troca de óleo")]
+    placa = str(veic_row.get("placa", "")).upper().strip()
+    km_atual = _safe_int(veic_row.get("km_atual", 0))
+
+    if df_manu is None or df_manu.empty or "tipo" not in df_manu.columns:
+        st.info("🔧 Troca de óleo: sem histórico cadastrado.")
+        return
+
+    # CORREÇÃO: .copy() evita SettingWithCopyWarning/erro ao gravar na fatia
+    manu_placa = df_manu[
+        (df_manu["placa"].astype(str).str.upper().str.strip() == placa)
+        & (df_manu["tipo"].astype(str).str.strip().str.lower() == "troca de óleo")
+    ].copy()
 
     if manu_placa.empty:
         st.info("🔧 Troca de óleo: sem histórico cadastrado.")
         return
 
     manu_placa["data"] = _to_date(manu_placa["data"])
-    ultima = manu_placa.sort_values("data", ascending=False).iloc[0]
-    data_ult = ultima["data"]
-    km_ult = int(ultima.get("km", 0) or 0)
+    manu_placa = manu_placa.sort_values("data", ascending=False, na_position="last")
+    ultima = manu_placa.iloc[0]
+    data_ult = _safe_date(ultima.get("data"))
+    km_ult = _safe_int(ultima.get("km", 0))
     meses = meses_passados(data_ult, date.today())
     km_diff = max(0, km_atual - km_ult)
 
     precisa = (km_diff >= KM_TROCA_OLEO) or (meses >= MESES_TROCA_OLEO)
+    txt_data = _fmt_date(data_ult, "data não informada")
+    txt_meses = "?" if meses == 9999 else meses
+
     if precisa:
         st.warning(
-            f"⚠️ Troca de óleo vencida • Última: {data_ult.strftime('%d/%m/%Y')} aos {km_ult} km • "
-            f"{km_diff} km / {meses} mês(es) desde então."
+            f"⚠️ Troca de óleo vencida • Última: {txt_data} aos {km_ult} km • "
+            f"{km_diff} km / {txt_meses} mês(es) desde então."
         )
     else:
         st.success(
-            f"✅ Troca de óleo em dia • Última: {data_ult.strftime('%d/%m/%Y')} aos {km_ult} km • "
-            f"+{km_diff} km / {meses} mês(es) desde então."
+            f"✅ Troca de óleo em dia • Última: {txt_data} aos {km_ult} km • "
+            f"+{km_diff} km / {txt_meses} mês(es) desde então."
         )
+
 
 # ---------------------------------
 # PÁGINA PRINCIPAL
@@ -2816,41 +2932,32 @@ def pagina_frota():
     st.header("🚗 Controle de Frota")
 
     # === Carrega do Supabase ===
-    veiculos = _ensure_cols(_norm_cols(carregar_dados("veiculos", COLS_VEIC)), COLS_VEIC)
-    manutencoes = _ensure_cols(_norm_cols(carregar_dados("manutencoes", COLS_MANU)), COLS_MANU)
-    custos = _ensure_cols(_norm_cols(carregar_dados("custos", COLS_CUSTOS)), COLS_CUSTOS)
-    km_log = _ensure_cols(_norm_cols(carregar_dados("km_log", COLS_KMLOG)), COLS_KMLOG)
+    try:
+        veiculos = _ensure_cols(_norm_cols(carregar_dados("veiculos", COLS_VEIC)), COLS_VEIC)
+        manutencoes = _ensure_cols(_norm_cols(carregar_dados("manutencoes", COLS_MANU)), COLS_MANU)
+        custos = _ensure_cols(_norm_cols(carregar_dados("custos", COLS_CUSTOS)), COLS_CUSTOS)
+        km_log = _ensure_cols(_norm_cols(carregar_dados("km_log", COLS_KMLOG)), COLS_KMLOG)
+    except Exception as e:
+        st.error(f"Erro ao carregar dados do banco: {e}")
+        return
 
-    # === Tipos ===
-    if not veiculos.empty:
-        veiculos["ano"] = _to_num(veiculos["ano"], True)
-        veiculos["km_atual"] = _to_num(veiculos["km_atual"], True)
-        veiculos["valor_veiculo"] = _to_num(veiculos["valor_veiculo"])
-        for d in ["data_ipva", "data_licenciamento", "data_seguro"]:
-            veiculos[d] = _to_date(veiculos[d])
-        for b in ["ipva_pago", "licenciamento_pago", "seguro_pago"]:
-            veiculos[b] = _to_bool(veiculos[b])
-
-    if not manutencoes.empty:
-        manutencoes["data"] = _to_date(manutencoes["data"])
-        manutencoes["valor"] = _to_num(manutencoes["valor"])
-        manutencoes["km"] = _to_num(manutencoes["km"], True)
-
-    if not km_log.empty:
-        km_log["data"] = _to_date(km_log["data"])
-        km_log["km"] = _to_num(km_log["km"], True)
+    # === Tipos (aplicados sempre, inclusive em tabelas vazias) ===
+    veiculos = _tipar_veiculos(veiculos)
+    manutencoes = _tipar_manutencoes(manutencoes)
+    km_log = _tipar_kmlog(km_log)
 
     # === Cards ===
     tot_veic = len(veiculos)
-    tot_manu = manutencoes["valor"].sum() if not manutencoes.empty else 0
-    soma_frota = veiculos["valor_veiculo"].sum() if not veiculos.empty else 0
-    ult_manu = manutencoes["data"].max() if not manutencoes.empty else None
+    tot_manu = float(manutencoes["valor"].sum()) if not manutencoes.empty else 0.0
+    soma_frota = float(veiculos["valor_veiculo"].sum()) if not veiculos.empty else 0.0
+    datas_manu = [d for d in manutencoes["data"].tolist() if _safe_date(d)] if not manutencoes.empty else []
+    ult_manu = max(datas_manu) if datas_manu else None
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("🚘 Veículos", f"{tot_veic}")
     c2.metric("💵 Gasto em manutenções", f"R$ {tot_manu:,.2f}")
     c3.metric("🧾 Valor total da frota", f"R$ {soma_frota:,.2f}")
-    c4.metric("🗓️ Última manutenção", ult_manu.strftime("%d/%m/%Y") if isinstance(ult_manu, date) else "-")
+    c4.metric("🗓️ Última manutenção", _fmt_date(ult_manu))
 
     aba1, aba2, aba3, aba4 = st.tabs(["Cadastro de Veículos", "Manutenções", "Resumo & Alertas", "Controle"])
 
@@ -2860,47 +2967,60 @@ def pagina_frota():
         with st.form("cad_veic", clear_on_submit=True):
             col1, col2, col3 = st.columns(3)
             with col1:
-                placa = st.text_input("Placa").upper().strip()
-                tipo = st.selectbox("Tipo", ["Kombi", "Carro", "Moto", "Van", "Pickup", "Outro"])
-                ano = st.number_input("Ano", 1970, date.today().year+1, date.today().year)
+                placa_in = st.text_input("Placa", key="veic_placa").upper().strip()
+                tipo_in = st.selectbox("Tipo", ["Kombi", "Carro", "Moto", "Van", "Pickup", "Outro"], key="veic_tipo")
+                ano_in = st.number_input("Ano", 1970, date.today().year + 1, date.today().year, key="veic_ano")
             with col2:
-                modelo = st.text_input("Modelo")
-                status = st.selectbox("Status", ["Ativo", "Em manutenção", "Inativo"])
-                km_atual = st.number_input("Km Atual", 0)
+                modelo_in = st.text_input("Modelo", key="veic_modelo")
+                status_in = st.selectbox("Status", ["Ativo", "Em manutenção", "Inativo"], key="veic_status")
+                km_in = st.number_input("Km Atual", min_value=0, step=100, key="veic_km")
             with col3:
-                valor = st.number_input("Valor Veículo (R$)", 0.0)
+                valor_in = st.number_input("Valor Veículo (R$)", min_value=0.0, step=100.0, format="%.2f", key="veic_valor")
 
             col4, col5, col6 = st.columns(3)
             with col4:
-                ipva = st.date_input("Data IPVA", value=None)
-                pago1 = st.checkbox("IPVA Pago", False)
+                ipva = st.date_input("Data IPVA", value=None, format="DD/MM/YYYY", key="veic_data_ipva")
+                pago1 = st.checkbox("IPVA Pago", False, key="veic_ipva_pago")
             with col5:
-                lic = st.date_input("Data Licenciamento", value=None)
-                pago2 = st.checkbox("Licenciamento Pago", False)
+                lic = st.date_input("Data Licenciamento", value=None, format="DD/MM/YYYY", key="veic_data_lic")
+                pago2 = st.checkbox("Licenciamento Pago", False, key="veic_lic_pago")
             with col6:
-                seg = st.date_input("Data Seguro", value=None)
-                pago3 = st.checkbox("Seguro Pago", False)
-            obs = st.text_area("Observações")
+                seg = st.date_input("Data Seguro", value=None, format="DD/MM/YYYY", key="veic_data_seg")
+                pago3 = st.checkbox("Seguro Pago", False, key="veic_seg_pago")
+            obs = st.text_area("Observações", key="veic_obs")
+
             if st.form_submit_button("💾 Salvar veículo"):
-                if not placa or not modelo:
+                if not placa_in or not modelo_in:
                     st.error("Informe Placa e Modelo.")
                 else:
-                    novo = pd.DataFrame([{
-                        "placa": placa, "modelo": modelo, "tipo": tipo, "ano": ano,
-                        "status": status, "km_atual": km_atual, "valor_veiculo": valor,
-                        "data_ipva": ipva, "data_licenciamento": lic, "data_seguro": seg,
-                        "ipva_pago": pago1, "licenciamento_pago": pago2, "seguro_pago": pago3,
-                        "observacao": obs
-                    }])
-                    if placa in veiculos["placa"].values:
-                        veiculos.loc[veiculos["placa"] == placa] = novo.iloc[0]
-                        st.success(f"Veículo {placa} atualizado!")
+                    registro = {
+                        "placa": placa_in, "modelo": modelo_in, "tipo": tipo_in, "ano": int(ano_in),
+                        "status": status_in, "km_atual": int(km_in), "valor_veiculo": float(valor_in),
+                        "data_ipva": _safe_date(ipva), "data_licenciamento": _safe_date(lic),
+                        "data_seguro": _safe_date(seg),
+                        "ipva_pago": bool(pago1), "licenciamento_pago": bool(pago2),
+                        "seguro_pago": bool(pago3), "observacao": obs
+                    }
+                    if placa_in in veiculos["placa"].values:
+                        # CORREÇÃO: atribuição coluna a coluna (o antigo `= novo.iloc[0]` quebrava)
+                        mask = veiculos["placa"] == placa_in
+                        for col, val in registro.items():
+                            veiculos.loc[mask, col] = val
+                        msg = f"Veículo {placa_in} atualizado!"
                     else:
-                        veiculos = pd.concat([veiculos, novo], ignore_index=True)
-                        st.success(f"Veículo {placa} cadastrado!")
-                    salvar_dados(_dates_to_str(veiculos), "veiculos")
+                        veiculos = pd.concat([veiculos, pd.DataFrame([registro])], ignore_index=True)
+                        msg = f"Veículo {placa_in} cadastrado!"
+                    try:
+                        salvar_dados(_dates_to_str(veiculos, COLS_DATA["veiculos"]), "veiculos")
+                        st.success(msg)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erro ao salvar veículo: {e}")
 
-        st.dataframe(veiculos, use_container_width=True) if not veiculos.empty else st.info("Nenhum veículo cadastrado.")
+        if veiculos.empty:
+            st.info("Nenhum veículo cadastrado.")
+        else:
+            st.dataframe(_df_exibicao(veiculos, COLS_DATA["veiculos"]), use_container_width=True)
 
     # === Aba 2 ===
     with aba2:
@@ -2908,79 +3028,117 @@ def pagina_frota():
         if veiculos.empty:
             st.warning("Cadastre um veículo primeiro.")
         else:
-            with st.form("cad_manu"):
-                placa = st.selectbox("Placa", veiculos["placa"])
-                tipo = st.selectbox("Tipo", TIPOS_MANU)
-                data = st.date_input("Data", value=date.today())
-                km = st.number_input("Km", 0)
-                valor = st.number_input("Valor (R$)", 0.0)
-                desc = st.text_area("Descrição")
+            with st.form("cad_manu", clear_on_submit=True):
+                # CORREÇÃO: key exclusiva evita DuplicateWidgetID com a aba 4
+                placa_m = st.selectbox("Placa", veiculos["placa"].tolist(), key="manu_placa")
+                tipo_m = st.selectbox("Tipo", TIPOS_MANU, key="manu_tipo")
+                data_m = st.date_input("Data", value=date.today(), format="DD/MM/YYYY", key="manu_data")
+                km_m = st.number_input("Km", min_value=0, step=100, key="manu_km")
+                valor_m = st.number_input("Valor (R$)", min_value=0.0, step=10.0, format="%.2f", key="manu_valor")
+                desc_m = st.text_area("Descrição", key="manu_desc")
+
                 if st.form_submit_button("💾 Salvar manutenção"):
-                    nova = pd.DataFrame([{"placa": placa, "tipo": tipo, "descricao": desc, "data": data, "km": km, "valor": valor}])
-                    manutencoes = pd.concat([manutencoes, nova], ignore_index=True)
-                    salvar_dados(_dates_to_str(manutencoes), "manutencoes")
-                    st.success(f"Manutenção '{tipo}' registrada para {placa}!")
+                    nova = pd.DataFrame([{
+                        "placa": placa_m, "tipo": tipo_m, "descricao": desc_m,
+                        "data": _safe_date(data_m), "km": int(km_m), "valor": float(valor_m)
+                    }])
                     try:
-                        novo_custo = pd.DataFrame([{
-                            "descricao": f"Manutenção {tipo} - {placa}",
-                            "categoria": "Manutenção de Frota",
-                            "valor": valor,
-                            "data": data,
-                            "forma_de_pagamento": "Outro",
-                            "observacao": desc
-                        }])
-                        custos = pd.concat([custos, novo_custo], ignore_index=True)
-                        salvar_dados(_dates_to_str(custos), "custos")
-                        st.info("📥 Lançado também em custos.")
+                        manutencoes = pd.concat([manutencoes, nova], ignore_index=True)
+                        salvar_dados(_dates_to_str(manutencoes, COLS_DATA["manutencoes"]), "manutencoes")
+                        st.success(f"Manutenção '{tipo_m}' registrada para {placa_m}!")
                     except Exception as e:
-                        st.warning(f"Erro ao lançar em custos: {e}")
+                        st.error(f"Erro ao salvar manutenção: {e}")
+                    else:
+                        try:
+                            novo_custo = pd.DataFrame([{
+                                "descricao": f"Manutenção {tipo_m} - {placa_m}",
+                                "categoria": "Manutenção de Frota",
+                                "valor": float(valor_m),
+                                "data": _safe_date(data_m),
+                                "forma_de_pagamento": "Outro",
+                                "observacao": desc_m
+                            }])
+                            custos = pd.concat([custos, novo_custo], ignore_index=True)
+                            salvar_dados(_dates_to_str(custos, COLS_DATA["custos"]), "custos")
+                            st.info("📥 Lançado também em custos.")
+                        except Exception as e:
+                            st.warning(f"Erro ao lançar em custos: {e}")
+
+            if not manutencoes.empty:
+                st.markdown("##### Histórico de manutenções")
+                hist = manutencoes.sort_values("data", ascending=False, na_position="last")
+                st.dataframe(_df_exibicao(hist, COLS_DATA["manutencoes"]), use_container_width=True)
 
     # === Aba 3 ===
     with aba3:
         st.subheader("Resumo e Alertas")
-        hoje = date.today()
-        for _, v in veiculos.iterrows():
-            st.markdown(f"<div class='tt-card'><div class='tt-title'>{v['placa']} – {v['modelo']}</div>", unsafe_allow_html=True)
-            for nome, data, pago in [
-                ("IPVA", v["data_ipva"], v["ipva_pago"]),
-                ("Licenciamento", v["data_licenciamento"], v["licenciamento_pago"]),
-                ("Seguro", v["data_seguro"], v["seguro_pago"])
-            ]:
-                if pago:
-                    st.success(f"✅ {nome} pago.")
-                else:
-                    alerta_vencimento(nome, data)
-            proxima_troca_oleo_alerta(v, manutencoes)
-            st.markdown("</div>", unsafe_allow_html=True)
+        if veiculos.empty:
+            st.info("Cadastre um veículo para ver os alertas.")
+        else:
+            for _, v in veiculos.iterrows():
+                st.markdown(
+                    f"<div class='tt-card'><div class='tt-title'>{v['placa']} – {v['modelo']}</div>",
+                    unsafe_allow_html=True
+                )
+                for nome, dt_venc, pago in [
+                    ("IPVA", v.get("data_ipva"), v.get("ipva_pago")),
+                    ("Licenciamento", v.get("data_licenciamento"), v.get("licenciamento_pago")),
+                    ("Seguro", v.get("data_seguro"), v.get("seguro_pago")),
+                ]:
+                    if bool(pago):
+                        st.success(f"✅ {nome} pago{' (vence ' + _fmt_date(dt_venc) + ')' if _safe_date(dt_venc) else ''}.")
+                    else:
+                        alerta_vencimento(nome, dt_venc)
+                proxima_troca_oleo_alerta(v, manutencoes)
+                st.markdown("</div>", unsafe_allow_html=True)
 
     # === Aba 4 ===
     with aba4:
         st.subheader("Controle rápido")
         if veiculos.empty:
+            # CORREÇÃO: era `return`, o que abortava a função inteira
             st.info("Cadastre um veículo para usar esta aba.")
-            return
-
-        placa = st.selectbox("Placa", veiculos["placa"])
-        v = veiculos.loc[veiculos["placa"] == placa].iloc[0]
-        km_atual = st.number_input("Km Atual", value=int(v["km_atual"]))
-        ipva_pago = st.checkbox("IPVA Pago", bool(v["ipva_pago"]))
-        lic_pago = st.checkbox("Licenciamento Pago", bool(v["licenciamento_pago"]))
-        seg_pago = st.checkbox("Seguro Pago", bool(v["seguro_pago"]))
-        if st.button("💾 Salvar atualização"):
-            veiculos.loc[veiculos["placa"] == placa, ["km_atual","ipva_pago","licenciamento_pago","seguro_pago"]] = [
-                km_atual, ipva_pago, lic_pago, seg_pago
-            ]
-            salvar_dados(_dates_to_str(veiculos), "veiculos")
-            km_log = pd.concat([km_log, pd.DataFrame([{"placa": placa, "data": date.today(), "km": km_atual}])], ignore_index=True)
-            salvar_dados(_dates_to_str(km_log), "km_log")
-            st.success("✅ Atualização salva!")
-
-        df_km = km_log[km_log["placa"] == placa]
-        if not df_km.empty:
-            df_km["data"] = pd.to_datetime(df_km["data"])
-            st.line_chart(df_km.set_index("data")["km"])
         else:
-            st.info("Sem histórico de KM ainda.")
+            placa_c = st.selectbox("Placa", veiculos["placa"].tolist(), key="ctrl_placa")
+            v = veiculos.loc[veiculos["placa"] == placa_c].iloc[0]
+
+            km_novo = st.number_input(
+                "Km Atual", min_value=0, step=100,
+                value=_safe_int(v.get("km_atual")), key="ctrl_km"
+            )
+            ipva_pago = st.checkbox("IPVA Pago", value=bool(v.get("ipva_pago")), key="ctrl_ipva")
+            lic_pago = st.checkbox("Licenciamento Pago", value=bool(v.get("licenciamento_pago")), key="ctrl_lic")
+            seg_pago = st.checkbox("Seguro Pago", value=bool(v.get("seguro_pago")), key="ctrl_seg")
+
+            if st.button("💾 Salvar atualização", key="ctrl_salvar"):
+                try:
+                    mask = veiculos["placa"] == placa_c
+                    veiculos.loc[mask, "km_atual"] = int(km_novo)
+                    veiculos.loc[mask, "ipva_pago"] = bool(ipva_pago)
+                    veiculos.loc[mask, "licenciamento_pago"] = bool(lic_pago)
+                    veiculos.loc[mask, "seguro_pago"] = bool(seg_pago)
+                    salvar_dados(_dates_to_str(veiculos, COLS_DATA["veiculos"]), "veiculos")
+
+                    km_log = pd.concat(
+                        [km_log, pd.DataFrame([{"placa": placa_c, "data": date.today(), "km": int(km_novo)}])],
+                        ignore_index=True
+                    )
+                    salvar_dados(_dates_to_str(km_log, COLS_DATA["km_log"]), "km_log")
+                    st.success("✅ Atualização salva!")
+                except Exception as e:
+                    st.error(f"Erro ao salvar atualização: {e}")
+
+            df_km = km_log[km_log["placa"] == placa_c].copy()   # CORREÇÃO: .copy() na fatia
+            if not df_km.empty:
+                df_km["data"] = pd.to_datetime(df_km["data"], errors="coerce")
+                df_km = df_km.dropna(subset=["data"]).sort_values("data")
+                if df_km.empty:
+                    st.info("Sem histórico de KM válido ainda.")
+                else:
+                    st.line_chart(df_km.set_index("data")["km"])
+            else:
+                st.info("Sem histórico de KM ainda.")
+
 
 
 # =========================
