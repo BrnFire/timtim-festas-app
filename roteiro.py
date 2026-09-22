@@ -248,29 +248,15 @@ def minutos_deslocamento(km):
 # ==============================================================
 # ⏱️ TEMPO DE SERVIÇO ESTIMADO POR PARADA
 # ==============================================================
+
 def tempo_servico(parada: dict, cat_map: dict) -> int:
-    """
-    Base (montagem 90min / desmontagem 45min)
-      + 10min por brinquedo extra
-      + 20min se houver item montessori (tatames dão trabalho)
-    """
-    itens = [b.strip() for b in _s(parada.get("brinquedos")).split(",") if b.strip()]
-    qtd = max(1, len(itens))
-
-    if parada["tipo"] == "Entrega":
-        base = MIN_MONTAGEM_PADRAO
-        extra_item = MIN_POR_BRINQUEDO_EXTRA
-    else:
-        base = MIN_DESMONTAGEM_PADRAO
-        extra_item = max(5, MIN_POR_BRINQUEDO_EXTRA // 2)
-
-    total = base + (qtd - 1) * extra_item
-
-    tem_montessori = any(cat_map.get(_norm(i), "") == "montessori" for i in itens)
-    if tem_montessori:
-        total += MIN_MONTESSORI_EXTRA if parada["tipo"] == "Entrega" else MIN_MONTESSORI_EXTRA // 2
-
-    return int(total)
+"""
+Tempo FIXO por parada, independente da quantidade de brinquedos
+ou da categoria. Ajuste as constantes no topo do arquivo.
+"""
+if parada["tipo"] == "Entrega":
+return int(MIN_MONTAGEM_PADRAO)
+return int(MIN_DESMONTAGEM_PADRAO)
 
 
 def _carregar_categorias() -> dict:
