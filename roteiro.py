@@ -1,29 +1,27 @@
 # ==============================================================
-# MÓDULO ROTEIRO DO DIA – TimTim Festas   ***VERSÃO 3***
+# MÓDULO ROTEIRO DO DIA – TimTim Festas   ***VERSÃO 4***
 # Arquivo independente. Não altera nenhum outro módulo do app.
 #
-# COMO SABER QUE É A v3 (e não a v2):
-#   - Cada parada tem 4 BOTÕES: Navegar | Avisar | 📍 Cheguei | ✏️ Ajustar
-#   - Existe o painel "📊 Seus tempos reais (calibração)"
-#   - Os cards de resumo são 5 (inclui 🕐 Jornada)
-#   - Ao abrir a página aparece no topo: "Roteiro do Dia · v3"
+# NOVIDADES DA v4:
+#   - Tempo de serviço FIXO (1h30 na entrega), sem adicional por brinquedo
+#   - Botões "⏮️ Anterior" e "Próximo ⏭️" saltam para o dia com evento
+#   - Botões alinhados com o campo de data
+#   - Cards do dia: Km rodados | Na estrada | Trabalhando | Jornada | Ocioso
 #
-# NOVIDADES DA v3:
+# MANTIDO DA v3:
 #   - Botões "📍 Cheguei" / "✅ Terminei" gravam o horário REAL
 #   - O tempo real substitui a estimativa e recalcula o resto do dia
-#   - Cronômetro da parada em andamento (minutos decorridos)
-#   - Comparativo real x previsto (ex.: "40min mais rápido")
 #   - Ajuste manual de horário caso esqueça de clicar
-#   - Calibração automática da sua média de montagem
+#   - Calibração automática da média de montagem
 #
 # INSTALAÇÃO:
 #   1) Salve este arquivo como  roteiro.py  (substituindo o antigo)
-#   2) Rode o SQL do roteiro_supabase_v3.sql no Supabase
+#   2) O SQL continua o mesmo da v3 (roteiro_supabase_v3.sql)
 #   3) No app.py, as mesmas 3 linhas do final deste arquivo
-#   4) PARE e RODE de novo:  streamlit run app.py   (F5 não basta!)
+#   4) Reinicie o Streamlit (no Cloud: faça o commit no GitHub)
 # ==============================================================
 
-VERSAO_MODULO = "v3"
+VERSAO_MODULO = "v4"
 
 import re
 import math
@@ -48,16 +46,17 @@ PRECO_COMBUSTIVEL = 6.20
 MAX_WAYPOINTS_MAPS = 9
 
 # ---------- ⏱️ TEMPOS OPERACIONAIS ----------
-MIN_MONTAGEM_PADRAO = 90        # 1h30 — tempo médio de montagem na entrega
-MIN_DESMONTAGEM_PADRAO = 45     # retirada costuma ser mais rápida
-MIN_POR_BRINQUEDO_EXTRA = 10    # a cada brinquedo além do 1º
-MIN_MONTESSORI_EXTRA = 20       # kit montessori (tatames) leva mais tempo
+# v4: tempo FIXO por parada, independente da quantidade de brinquedos
+MIN_MONTAGEM_PADRAO = 90        # 1h30 fixo na entrega
+MIN_DESMONTAGEM_PADRAO = 45     # fixo na retirada
+MIN_POR_BRINQUEDO_EXTRA = 0     # desativado na v4
+MIN_MONTESSORI_EXTRA = 0        # desativado na v4
 
 VELOCIDADE_MEDIA_KMH = 25.0     # trânsito urbano ABC/SP
 MIN_FOLGA_SEGURANCA = 10        # margem ao sugerir novo horário
 HORA_SAIDA_MINIMA = "06:00"     # não sugere sair da base antes disso
 
-# ---------- 📡 TEMPO REAL (v3) ----------
+# ---------- 📡 TEMPO REAL ----------
 MIN_AMOSTRAS_CALIBRACAO = 3     # registros mínimos p/ sugerir novo padrão
 DIAS_HISTORICO_CALIBRACAO = 180 # janela do histórico na calibração
 
@@ -166,6 +165,20 @@ def agora_hhmm() -> str:
     return datetime.now().strftime("%H:%M")
 
 
+def card(col, titulo, valor, cor, rodape=""):
+    extra = (f"<div style='font-size:.75em;color:#777;margin-top:3px;'>{rodape}</div>"
+             if rodape else "")
+    col.markdown(
+        f"""<div style="background:#f9f9f9;border-left:6px solid {cor};
+             border-radius:12px;padding:12px;text-align:center;
+             box-shadow:2px 2px 10px rgba(0,0,0,.08);min-height:92px;">
+             <div style="font-size:.82em;color:#555;">{titulo}</div>
+             <div style="font-size:1.3em;font-weight:800;color:#222;">{valor}</div>
+             {extra}</div>""",
+        unsafe_allow_html=True
+    )
+
+
 # ==============================================================
 # GEOLOCALIZAÇÃO (cache 24h)
 # ==============================================================
@@ -246,18 +259,20 @@ def minutos_deslocamento(km):
 
 
 # ==============================================================
-# ⏱️ TEMPO DE SERVIÇO ESTIMADO POR PARADA
+# ⏱️ TEMPO DE SERVIÇO — v4: FIXO
 # ==============================================================
-
-def tempo_servico(parada: dict, cat_map: dict) -> int:
-
+def tempo_servico(parada: dict, cat_map: dict = None) -> int:
+    """
+    Tempo FIXO por parada, independente da quantidade de brinquedos
+    ou da categoria. Ajuste as constantes no topo do arquivo.
+    """
     if parada["tipo"] == "Entrega":
         return int(MIN_MONTAGEM_PADRAO)
     return int(MIN_DESMONTAGEM_PADRAO)
 
 
 def _carregar_categorias() -> dict:
-    """Mapa nome_normalizado -> categoria, para detectar montessori."""
+    """Mantido para compatibilidade (não afeta mais o tempo de serviço)."""
     try:
         df = carregar_dados("brinquedos", COLS_BRINQUEDOS)
         if df is None or df.empty:
@@ -291,6 +306,28 @@ def _endereco_maps(cli: dict) -> str:
         base = f"{log}, {num}" if num else log
         return f"{base}, {cid}, SP" + (f", {cep}" if cep else "")
     return cep or cid or ""
+
+
+def datas_com_evento(reservas: pd.DataFrame) -> list:
+    """
+    Todas as datas que têm entrega ou retirada, já considerando a regra D+1.
+    Usado pelos botões ⏮️ Anterior / Próximo ⏭️.
+    """
+    if reservas is None or reservas.empty:
+        return []
+    datas = set()
+    for _, r in reservas.iterrows():
+        if _s(r.get("status")).lower() in STATUS_IGNORADOS:
+            continue
+        d = pd.to_datetime(r.get("data"), errors="coerce")
+        if pd.isna(d):
+            continue
+        d = d.date()
+        h_ent = _hora(r.get("horario_entrega"), "08:00")
+        h_ret = _hora(r.get("horario_retirada"), "18:00")
+        datas.add(d)
+        datas.add(d + timedelta(days=1) if _min_do_dia(h_ret) <= _min_do_dia(h_ent) else d)
+    return sorted(datas)
 
 
 def montar_paradas(data_alvo: date, reservas: pd.DataFrame, clientes: pd.DataFrame) -> list:
@@ -395,7 +432,7 @@ def calcular_distancias(paradas: list) -> tuple:
 
 
 # ==============================================================
-# ⏱️ SIMULAÇÃO DA LINHA DO TEMPO — CORAÇÃO DA v3
+# ⏱️ SIMULAÇÃO DA LINHA DO TEMPO
 # ==============================================================
 def simular_agenda(paradas: list, cat_map: dict, min_volta: int, agora: int = None) -> dict:
     """
@@ -404,7 +441,6 @@ def simular_agenda(paradas: list, cat_map: dict, min_volta: int, agora: int = No
     🔴 O RELÓGIO REAL TEM PRIORIDADE ABSOLUTA:
       - chegada_real registrada -> ela vale, não a estimativa
       - saida_real registrada  -> o tempo REAL substitui o estimado
-        (terminou em 50min em vez de 1h30 -> o resto do dia adianta 40min)
       - EM ANDAMENTO (chegou, não saiu) -> projeta usando o maior valor
         entre o tempo estimado e o já decorrido
       - Só paradas não iniciadas usam a estimativa pura
@@ -415,6 +451,7 @@ def simular_agenda(paradas: list, cat_map: dict, min_volta: int, agora: int = No
     relogio = None
     atraso_max = 0
     economia = 0          # minutos ganhos (+) ou perdidos (-) vs. o previsto
+    trabalho_real = 0     # minutos efetivamente trabalhados (cronômetro)
 
     for i, p in enumerate(paradas):
         combinado = _min_do_dia(p["hora"])
@@ -441,12 +478,14 @@ def simular_agenda(paradas: list, cat_map: dict, min_volta: int, agora: int = No
             p["min_servico_real"] = p["min_servico"]
             saida = sa_real
             economia += p["min_servico_estimado"] - p["min_servico"]
+            trabalho_real += p["min_servico"]
         elif ch_real is not None and agora is not None:
             p["status_exec"] = "andamento"
             decorrido = max(0, agora - ch_real)
             p["min_decorrido"] = decorrido
             p["min_servico"] = max(p["min_servico_estimado"], decorrido)
             saida = chegada + p["min_servico"]
+            trabalho_real += decorrido
         elif ch_real is not None:
             # chegou, mas estamos vendo outro dia -> usa estimativa
             p["status_exec"] = "andamento"
@@ -496,11 +535,11 @@ def simular_agenda(paradas: list, cat_map: dict, min_volta: int, agora: int = No
         "total_servico": sum(p["min_servico"] for p in paradas),
         "total_deslocamento": sum(p["min_deslocamento"] for p in paradas) + min_volta,
         "total_ocioso": sum(p.get("ocioso", 0) for p in paradas),
+        "trabalho_real": trabalho_real,
         "maior_atraso": atraso_max,
         "paradas_atrasadas": [p for p in paradas
                               if p["atraso"] > 0 and p["status_exec"] != "concluida"],
         "conflitos_festa": [p for p in paradas if p.get("conflito_festa")],
-        # --- v3 ---
         "economia": economia,
         "concluidas": [p for p in paradas if p["status_exec"] == "concluida"],
         "em_andamento": em_andamento,
@@ -514,7 +553,7 @@ def sugerir_horario_viavel(parada: dict, anterior: dict) -> str:
 
 
 # ==============================================================
-# 📊 CALIBRAÇÃO AUTOMÁTICA (v3)
+# 📊 CALIBRAÇÃO AUTOMÁTICA
 # ==============================================================
 def estatisticas_reais(dias: int = DIAS_HISTORICO_CALIBRACAO) -> dict:
     """Média/mediana do tempo real de montagem e desmontagem."""
@@ -705,26 +744,14 @@ def pagina_roteiro():
     """, unsafe_allow_html=True)
 
     st.header("🚚 Roteiro do Dia")
-    st.caption(f"Módulo {VERSAO_MODULO} · cronômetro em tempo real ativo")
+    st.caption(f"Módulo {VERSAO_MODULO} · cronômetro em tempo real · "
+               f"montagem fixa de {_dur(MIN_MONTAGEM_PADRAO)}")
 
     hoje = date.today()
     if "rt_data" not in st.session_state:
         st.session_state.rt_data = hoje
 
-    c1, c2, c3 = st.columns([2, 1, 1])
-    with c1:
-        data_alvo = st.date_input("📅 Data do roteiro", value=st.session_state.rt_data,
-                                  format="DD/MM/YYYY", key="rt_data_input")
-        st.session_state.rt_data = data_alvo
-    with c2:
-        if st.button("Hoje", use_container_width=True):
-            st.session_state.rt_data = hoje
-            st.rerun()
-    with c3:
-        if st.button("Amanhã", use_container_width=True):
-            st.session_state.rt_data = hoje + timedelta(days=1)
-            st.rerun()
-
+    # ---------- Carrega ANTES do seletor (para saber quais dias têm evento) ----------
     try:
         reservas = carregar_dados("reservas", COLS_RESERVAS)
         clientes = carregar_dados("clientes", COLS_CLIENTES)
@@ -732,6 +759,52 @@ def pagina_roteiro():
         st.error(f"Erro ao carregar dados: {e}")
         return
 
+    dias_evento = datas_com_evento(reservas)
+    atual = st.session_state.rt_data
+    anterior = max([d for d in dias_evento if d < atual], default=None)
+    proximo = min([d for d in dias_evento if d > atual], default=None)
+
+    # ---------- Seletor de data + navegação ----------
+    c1, c2, c3, c4, c5 = st.columns([2.2, 1.3, 0.8, 1, 1.3])
+
+    with c1:
+        data_alvo = st.date_input("📅 Data do roteiro", value=st.session_state.rt_data,
+                                  format="DD/MM/YYYY", key="rt_data_input")
+        st.session_state.rt_data = data_alvo
+
+    # Espaçador que alinha os botões com o campo de data (compensa o label)
+    for col in (c2, c3, c4, c5):
+        col.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+
+    if c2.button("⏮️ Anterior", use_container_width=True, disabled=anterior is None,
+                 help=f"Evento em {anterior.strftime('%d/%m/%Y')}" if anterior
+                      else "Nenhum evento antes desta data"):
+        st.session_state.rt_data = anterior
+        st.rerun()
+
+    if c3.button("Hoje", use_container_width=True):
+        st.session_state.rt_data = hoje
+        st.rerun()
+
+    if c4.button("Amanhã", use_container_width=True):
+        st.session_state.rt_data = hoje + timedelta(days=1)
+        st.rerun()
+
+    if c5.button("Próximo ⏭️", use_container_width=True, disabled=proximo is None,
+                 help=f"Evento em {proximo.strftime('%d/%m/%Y')}" if proximo
+                      else "Nenhum evento depois desta data"):
+        st.session_state.rt_data = proximo
+        st.rerun()
+
+    if proximo:
+        st.caption(f"📌 Próximo evento: **{proximo.strftime('%d/%m/%Y')}** "
+                   f"(em {(proximo - hoje).days} dia(s)) · "
+                   f"{len(dias_evento)} dia(s) com evento no total")
+    elif dias_evento:
+        st.caption(f"📌 Nenhum evento após {atual.strftime('%d/%m/%Y')}. "
+                   f"{len(dias_evento)} dia(s) com evento no histórico.")
+
+    # ---------- Paradas do dia ----------
     paradas = montar_paradas(data_alvo, reservas, clientes)
     if not paradas:
         st.info(f"Nenhuma entrega ou retirada em {data_alvo.strftime('%d/%m/%Y')}. Dia livre! 🎉")
@@ -754,7 +827,7 @@ def pagina_roteiro():
         cat_map = _carregar_categorias()
         agenda = simular_agenda(paradas, cat_map, min_volta, agora=agora_min)
 
-    # ---------- Cards de resumo (5 na v3) ----------
+    # ---------- Cards de resumo ----------
     litros = km_total / CONSUMO_KML if CONSUMO_KML else 0
     combustivel = litros * PRECO_COMBUSTIVEL
     a_receber = sum(p["falta"] for p in paradas)
@@ -770,13 +843,22 @@ def pagina_roteiro():
         (m5, "💰 A receber", f"R$ {a_receber:,.2f}", "#2ECC71"),
     ]
     for col, titulo, valor, cor in resumo:
-        col.markdown(
-            f"""<div style="background:#f9f9f9;border-left:6px solid {cor};border-radius:12px;
-                 padding:14px;text-align:center;box-shadow:2px 2px 10px rgba(0,0,0,.08);">
-                 <div style="font-size:.85em;color:#555;">{titulo}</div>
-                 <div style="font-size:1.3em;font-weight:800;">{valor}</div></div>""",
-            unsafe_allow_html=True
-        )
+        card(col, titulo, valor, cor)
+
+    # ---------- 📊 Cards operacionais do dia ----------
+    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+    o1, o2, o3, o4, o5 = st.columns(5)
+    card(o1, "🛣️ Km rodados", f"{km_total} km", "#3498DB",
+         f"{litros:.1f} litros estimados")
+    card(o2, "⏱️ Na estrada", _dur(agenda["total_deslocamento"]), "#9B59B6",
+         f"média {VELOCIDADE_MEDIA_KMH:.0f} km/h")
+    card(o3, "🔧 Trabalhando", _dur(agenda["total_servico"]), "#E67E22",
+         f"{_dur(agenda['trabalho_real'])} já cronometrado"
+         if agenda["trabalho_real"] else "estimativa")
+    card(o4, "⏸️ Ocioso", _dur(agenda["total_ocioso"]), "#95A5A6",
+         "espera entre paradas")
+    card(o5, "🕐 Jornada total", _dur(jornada), "#16A085",
+         f"{_hhmm(agenda['saida_base'])} → {_hhmm(agenda['retorno_base'])}")
 
     # ---------- Plano do dia ----------
     st.markdown("### ⏱️ Plano do dia")
@@ -792,7 +874,7 @@ def pagina_roteiro():
             f"({HORA_SAIDA_MINIMA}). Considere remarcar a primeira entrega."
         )
 
-    # ---------- 📡 PAINEL AO VIVO (v3) ----------
+    # ---------- 📡 PAINEL AO VIVO ----------
     andando = agenda.get("em_andamento")
     economia = agenda.get("economia", 0)
 
@@ -963,7 +1045,7 @@ def pagina_roteiro():
         bloco.append("</div>")
         st.markdown("".join(bloco), unsafe_allow_html=True)
 
-        # ---- 4 BOTÕES (marca registrada da v3) ----
+        # ---- 4 botões ----
         ch = _chave_parada(p)
         b1, b2, b3, b4 = st.columns(4)
 
@@ -1001,7 +1083,7 @@ def pagina_roteiro():
                              saida_real=None, concluida=False)
                 st.rerun()
 
-        # ---- AJUSTE MANUAL (esqueceu de clicar) ----
+        # ---- AJUSTE MANUAL ----
         with b4.popover("✏️ Ajustar", use_container_width=True):
             st.caption("Corrija os horários se esqueceu de clicar na hora.")
             ch_txt = st.text_input("Chegada (HH:MM)", value=p["chegada_real"] or "",
@@ -1034,7 +1116,7 @@ def pagina_roteiro():
         st.text_area("Roteiro:", texto_roteiro(paradas, data_alvo, km_total, agenda),
                      height=450, key="rt_texto")
 
-    # ---------- 📊 Calibração (v3) ----------
+    # ---------- 📊 Calibração ----------
     with st.expander("📊 Seus tempos reais (calibração)"):
         stats = estatisticas_reais()
         if not stats:
@@ -1057,13 +1139,13 @@ def pagina_roteiro():
                     st.caption(f"ℹ️ {rotulo.capitalize()}: {s['n']} registro(s) — "
                                f"a partir de {MIN_AMOSTRAS_CALIBRACAO} a sugestão fica confiável.")
                     continue
-                atual = padroes[rotulo]
+                atual_p = padroes[rotulo]
                 sugerido = s["mediana"]
-                if abs(sugerido - atual) >= 10:
+                if abs(sugerido - atual_p) >= 10:
                     const = "MIN_MONTAGEM_PADRAO" if rotulo == "montagem" else "MIN_DESMONTAGEM_PADRAO"
                     st.success(
                         f"💡 Sua {rotulo} real tem mediana de **{_dur(sugerido)}**, "
-                        f"contra {_dur(atual)} configurado. "
+                        f"contra {_dur(atual_p)} configurado. "
                         f"Considere ajustar no topo do arquivo: `{const} = {sugerido}`"
                     )
                 else:
@@ -1076,14 +1158,15 @@ def pagina_roteiro():
 |---|---|
 | Versão do módulo | **{VERSAO_MODULO}** |
 | Base de origem | {ENDERECO_BASE} |
-| Montagem (entrega) | {_dur(MIN_MONTAGEM_PADRAO)} |
-| Desmontagem (retirada) | {_dur(MIN_DESMONTAGEM_PADRAO)} |
-| Por brinquedo extra | +{MIN_POR_BRINQUEDO_EXTRA} min |
-| Kit Montessori | +{MIN_MONTESSORI_EXTRA} min |
+| Montagem (entrega) | **{_dur(MIN_MONTAGEM_PADRAO)} fixo** |
+| Desmontagem (retirada) | **{_dur(MIN_DESMONTAGEM_PADRAO)} fixo** |
+| Adicional por brinquedo | desativado |
+| Adicional Montessori | desativado |
 | Velocidade média | {VELOCIDADE_MEDIA_KMH} km/h |
 | Consumo | {CONSUMO_KML} km/l a R$ {PRECO_COMBUSTIVEL}/l |
         """)
-        st.caption("Edite as constantes no topo de roteiro.py.")
+        st.caption("O tempo de serviço é fixo, independente da quantidade de brinquedos. "
+                   "Edite as constantes no topo de roteiro.py.")
 
 
 # ==============================================================
