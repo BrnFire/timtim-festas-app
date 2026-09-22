@@ -10,7 +10,7 @@ from banco import carregar_dados, salvar_dados
 from banco import _ensure_cols
 from roteiro import pagina_roteiro
 from escala import pagina_escala
-from indicadores import pagina_relatorios
+from relatorios import pagina_relatorios
 
 # ========================================
 # CONFIGURAÇÃO INICIAL
