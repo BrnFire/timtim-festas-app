@@ -8,6 +8,7 @@ matplotlib==3.9.2
 requests==2.32.3
 geopy==2.4.
 st-gsheets-connection
+plotly
 
 # ======================================
 # 📁 LEITURA / ESCRITA DE ARQUIVOS
