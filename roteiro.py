@@ -47,7 +47,7 @@ MAX_WAYPOINTS_MAPS = 9
 
 # ---------- ⏱️ TEMPOS OPERACIONAIS ----------
 # v4: tempo FIXO por parada, independente da quantidade de brinquedos
-MIN_MONTAGEM_PADRAO = 90        # 1h30 fixo na entrega
+MIN_MONTAGEM_PADRAO = 50        # 1h30 fixo na entrega
 MIN_DESMONTAGEM_PADRAO = 45     # fixo na retirada
 MIN_POR_BRINQUEDO_EXTRA = 0     # desativado na v4
 MIN_MONTESSORI_EXTRA = 0        # desativado na v4
