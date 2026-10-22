@@ -1118,7 +1118,7 @@ def pagina_reservas():
         observacao = st.text_area("Observação (opcional)", value=str(reserva.get("observacao","")))
 
         # Valores financeiros (mantidos todos editáveis)
-        valor_extra = st.number_input("Valor Extra (R$)", min_value=0.0, step=10.0, value=float(reserva.get("valor_extra", 0.0)))
+        valor_extra = st.number_input("Valor (R$)", min_value=0.0, step=10.0, value=float(reserva.get("valor_extra", 0.0)))
         frete = st.number_input("Frete (R$)", min_value=0.0, step=10.0, value=float(frete_auto or reserva.get("frete", 0.0)))
         desconto = st.number_input("Desconto (R$)", min_value=0.0, step=10.0, value=float(reserva.get("desconto", 0.0)))
         sinal = float(reserva.get("sinal", 0.0))  # já usado no cálculo de falta/status
