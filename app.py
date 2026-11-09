@@ -1183,7 +1183,6 @@ import pandas as pd
 from datetime import datetime, timedelta
 import unicodedata
 import re
-from io import BytesIO
 
 from banco import carregar_dados
 
@@ -1272,76 +1271,45 @@ def pagina_estoque():
 
         df_disp = pd.DataFrame(todos)
 
-        # =====================================
-# EXPORTAR BRINQUEDOS DISPONÍVEIS
-# =====================================
-df_exportar = df_disp[df_disp["disponivel"]].copy()
+        # Exportar brinquedos disponiveis para Excel
+        from io import BytesIO
 
-df_exportar = df_exportar.rename(columns={
-    "brinquedo": "Brinquedo",
-    "categoria": "Categoria",
-    "status": "Status"
-})
+        df_exportar = df_disp[df_disp["disponivel"]].copy()
+        df_exportar = df_exportar.rename(columns={
+            "brinquedo": "Brinquedo",
+            "categoria": "Categoria",
+            "status": "Status",
+        })
+        df_exportar = df_exportar[["Brinquedo", "Categoria", "Status"]]
+        df_exportar = df_exportar.sort_values(by=["Categoria", "Brinquedo"]).reset_index(drop=True)
+        df_exportar.insert(0, "Data consultada", pd.to_datetime(data_escolhida).strftime("%d/%m/%Y"))
 
-# Coluna técnica não precisa aparecer no Excel
-df_exportar = df_exportar[[
-    "Brinquedo",
-    "Categoria",
-    "Status"
-]]
-
-# Organiza por categoria e nome
-df_exportar = df_exportar.sort_values(
-    by=["Categoria", "Brinquedo"]
-).reset_index(drop=True)
-
-# Acrescenta a data consultada
-df_exportar.insert(
-    0,
-    "Data consultada",
-    pd.to_datetime(data_escolhida).strftime("%d/%m/%Y")
-)
-
-# Cria o Excel na memória
-arquivo_excel = BytesIO()
-
-with pd.ExcelWriter(arquivo_excel, engine="openpyxl") as writer:
-    df_exportar.to_excel(
-        writer,
-        index=False,
-        sheet_name="Disponíveis"
-    )
-
-    planilha = writer.sheets["Disponíveis"]
-
-    # Ajusta automaticamente a largura das colunas
-    for coluna in planilha.columns:
-        maior_tamanho = 0
-        letra_coluna = coluna[0].column_letter
-
-        for celula in coluna:
-            valor = "" if celula.value is None else str(celula.value)
-            maior_tamanho = max(maior_tamanho, len(valor))
-
-        planilha.column_dimensions[letra_coluna].width = min(
-            maior_tamanho + 3,
-            50
-        )
-
-arquivo_excel.seek(0)
-
-nome_data = pd.to_datetime(data_escolhida).strftime("%d-%m-%Y")
-
-st.download_button(
-    label=f"📥 Extrair {len(df_exportar)} brinquedos disponíveis",
-    data=arquivo_excel,
-    file_name=f"brinquedos_disponiveis_{nome_data}.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    use_container_width=True
-)
-
-if df_exportar.empty:
-    st.warning("Nenhum brinquedo disponível para exportar nesta data.")
+        arquivo_excel = BytesIO()
+        try:
+            with pd.ExcelWriter(arquivo_excel, engine="openpyxl") as writer:
+                df_exportar.to_excel(writer, index=False, sheet_name="Disponíveis")
+                planilha = writer.sheets["Disponíveis"]
+                for coluna in planilha.columns:
+                    maior_tamanho = 0
+                    letra_coluna = coluna[0].column_letter
+                    for celula in coluna:
+                        valor = "" if celula.value is None else str(celula.value)
+                        maior_tamanho = max(maior_tamanho, len(valor))
+                    planilha.column_dimensions[letra_coluna].width = min(maior_tamanho + 3, 50)
+            arquivo_excel.seek(0)
+            nome_data = pd.to_datetime(data_escolhida).strftime("%d-%m-%Y")
+            st.download_button(
+                label=f"📥 Extrair {len(df_exportar)} brinquedos disponíveis",
+                data=arquivo_excel,
+                file_name=f"brinquedos_disponiveis_{nome_data}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                disabled=df_exportar.empty,
+            )
+            if df_exportar.empty:
+                st.warning("Nenhum brinquedo disponível para exportar nesta data.")
+        except ImportError:
+            st.error("Para exportar em Excel, adicione 'openpyxl' ao requirements.txt.")
 
         aba_todos, aba_trad, aba_mont = st.tabs(["🌈 Todos", "🎪 Tradicional", "🧸 Montessori"])
 
